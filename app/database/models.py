@@ -34,7 +34,6 @@ class StationTypeEnum(str, enum.Enum):
     PASSENGER = "PASSENGER"
     BAGGAGE = "BAGGAGE"
     FUEL = "FUEL"
-    BALLAST = "BALLAST"
     CUSTOM = "CUSTOM"
 
 
@@ -72,7 +71,6 @@ class Aircraft(Base):
     active_revision_id: Mapped[int | None] = mapped_column(
         ForeignKey("aircraft_revisions.id", use_alter=True, name="fk_active_revision"), nullable=True
     )
-    allow_added_ballast_recommendations: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_temporary: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     archived_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

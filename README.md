@@ -1,4 +1,4 @@
-# Safe Pilot -- Weight & Balance Telegram Bot
+# Weight & Balance Telegram Bot
 
 A Telegram bot for a personal Weight & Balance calculator: one pilot, a few friends, an
 occasional rental. The normal calculation is four questions -- front seats, rear seats,
@@ -49,7 +49,7 @@ automatically -- no separate "Select Aircraft" step required.
 **Add Aircraft** offers **Quick Setup** (recommended default: tail number, model, empty
 weight/CG, max takeoff weight, seats/baggage ARMs, fuel configuration, CG envelope -- nothing
 else) or **Advanced Setup** (adds manufacturer, nickname, ramp/landing/ZFW weights, known
-useful load, ballast, source documents). Both produce a full `AircraftRevision`; nothing about
+useful load, source documents). Both produce a full `AircraftRevision`; nothing about
 the underlying data model changes based on which path you took.
 
 ## Total fuel input: exact vs. range
@@ -257,11 +257,10 @@ time.
 6. **Recommendation solver** (`app/domain/recommendations.py`): when a phase is `ON_LIMIT` or
    `OUT_OF_LIMITS`, the solver searches for adjustments -- moving load between non-passenger
    stations, reducing baggage, reducing fuel (never below the pilot's stated minimum, never
-   changing which tank burns first), adding fuel, or (only if explicitly enabled per aircraft)
-   adding ballast. Every candidate is applied to a copy of the input and re-run through the
-   full ramp/takeoff/landing calculation before being offered -- nothing is suggested that the
-   engine hasn't itself verified lands inside all configured limits. Up to three options are
-   returned, smallest change first.
+   changing which tank burns first), or adding fuel. Every candidate is applied to a copy of
+   the input and re-run through the full ramp/takeoff/landing calculation before being offered
+   -- nothing is suggested that the engine hasn't itself verified lands inside all configured
+   limits. Up to three options are returned, smallest change first.
 
 The engine never guesses: if a value wasn't entered (e.g. no enroute fuel burn), the
 corresponding check is simply not run, and the bot says so explicitly ("Landing condition not
@@ -372,7 +371,7 @@ You:  2550
 ...  (landing weight, ZFW, known useful load -- all Skip or entered)
 Bot:  Let's configure stations. Add a station?  [Yes] [No]
 You:  (taps "Yes")
-Bot:  Station type:  [Front Seats] [Rear Seats] [Passenger] [Baggage] [Fuel] [Ballast] [Custom]
+Bot:  Station type:  [Front Seats] [Rear Seats] [Baggage] [Fuel] [Custom]
 You:  (taps "Front Seats")
 Bot:  Station name -- or just use the suggested default below.  [✅ Use "Front Seats"]
 You:  (taps "✅ Use \"Front Seats\"")
@@ -381,11 +380,11 @@ You:  37.0
 Bot:  Maximum station weight, in pounds (optional):
 You:  Skip
 Bot:  Station "Front Seats" added.  [Yes] [No] [🗑 Remove last]
-...  (repeat for Rear Seats, Baggage Area 1, Main Fuel -- Main Fuel additionally asks for
-      max fuel volume in gallons and fuel density in lb/gal, never defaulted silently. Seats,
-      baggage, and fuel tanks are always fixed-ARM -- only Ballast/Custom stations are asked
-      whether their ARM is fixed or adjustable, since those are the only ones that plausibly
-      move.)
+...  (repeat for Rear Seats, Baggage Area 1, Main Fuel -- Main Fuel additionally asks only for
+      max fuel volume in gallons; fuel density is fixed at 6.0 lb/gal (standard avgas) and
+      never asked. Seats, baggage, and fuel tanks are always fixed-ARM -- only Custom stations
+      are asked whether their ARM is fixed or adjustable, since those are the only ones that
+      plausibly move.)
 You:  (taps "No")
 Bot:  Enter CG envelope rows, one per message, as: weight, forward_limit, aft_limit
       Example format only (not real data): 2200, 35.0, 47.3
@@ -464,9 +463,11 @@ Documented here rather than hidden, per the "no invented behavior" principle of 
   W&B purposes, so Takeoff = Ramp. The domain layer still fully supports it
   (`FuelStationInput.taxi_burn_gal`) if this ever needs to change; it's just always 0 from the
   bot today.
-- **Adjustable ARM is only offered for Ballast/Custom stations.** Seats, baggage compartments,
+- **Adjustable ARM is only offered for Custom stations.** Seats, baggage compartments,
   and fuel tanks are fixed locations in the airframe and are always treated as fixed-ARM --
   the fixed/adjustable question isn't asked for them at all.
+- **Fuel density is fixed at 6.0 lb/gal (standard avgas) and never asked.** One question fewer
+  for a value that's effectively constant across the aircraft this bot targets.
 - **A "Front Seats"/"Rear Seats" load entry is the combined weight of everyone at that
   station** (e.g. pilot + front passenger together), not per-person -- the bot has no notion
   of individual seats within a station.
@@ -500,8 +501,9 @@ confirms manually. It does not:
 - Search the FAA registry or any other database.
 - Search the internet, download, or read a POH/AFM or any other document.
 - Use AI, an LLM, or OCR for any part of the calculation.
-- Invent, default, or assume any missing aircraft value (fuel density, unusable fuel, oil
-  weight, ARMs, envelope limits -- all must be entered explicitly).
+- Invent, default, or assume any missing aircraft value (unusable fuel, oil weight, ARMs,
+  envelope limits -- all must be entered explicitly), with one deliberate exception: fuel
+  density is fixed at 6.0 lb/gal (standard avgas) instead of being asked.
 - Evaluate fuel planning, aircraft performance, runway requirements, weather, or legal fuel
   reserves.
 - Guarantee airworthiness or flight approval in any way.

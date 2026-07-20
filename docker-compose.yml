@@ -1,6 +1,7 @@
 services:
   bot:
     build: .
+    container_name: weight-and-balance
     env_file:
       - .env
     environment:

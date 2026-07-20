@@ -26,7 +26,6 @@ class AircraftWizard(StatesGroup):
     station_max_arm = State()
     station_max_weight = State()
     station_fuel_max_volume = State()
-    station_fuel_density = State()
 
     envelope_rows = State()
 

@@ -13,7 +13,7 @@ logging.basicConfig(
     level=settings.log_level,
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
-logger = logging.getLogger("safe_pilot")
+logger = logging.getLogger("weight_and_balance")
 
 
 async def main() -> None:
@@ -30,7 +30,7 @@ async def main() -> None:
     dispatcher.include_router(aircraft_update.router)
     dispatcher.include_router(flight_calculation.router)
 
-    logger.info("Starting Safe Pilot bot (long polling)")
+    logger.info("Starting Weight & Balance bot (long polling)")
     await bot.delete_webhook(drop_pending_updates=True)
     await dispatcher.start_polling(bot)
 

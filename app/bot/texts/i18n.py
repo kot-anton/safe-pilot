@@ -114,8 +114,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "ru": "Проверка полезной нагрузки: введённое значение совпадает с расчётным.",
     },
     "ask_add_station": {
-        "en": "Let's configure stations (seats, baggage, fuel tanks, ballast). Add a station?",
-        "ru": "Настроим станции (места, багаж, топливные баки, балласт). Добавить станцию?",
+        "en": "Let's configure stations (seats, baggage, fuel tanks). Add a station?",
+        "ru": "Настроим станции (места, багаж, топливные баки). Добавить станцию?",
     },
     "ask_station_name": {"en": "Station name:", "ru": "Название станции:"},
     "ask_station_type": {"en": "Station type:", "ru": "Тип станции:"},
@@ -135,10 +135,6 @@ STRINGS: dict[str, dict[str, str]] = {
     "ask_fuel_max_volume": {
         "en": "Maximum fuel volume for this tank, in US gallons:",
         "ru": "Максимальный объём топлива в этом баке, в US галлонах:",
-    },
-    "ask_fuel_density": {
-        "en": "Fuel density for this tank, in lb per US gallon (e.g. 6.0 for 100LL avgas):",
-        "ru": "Плотность топлива в этом баке, фунт/US галлон (например, 6.0 для 100LL):",
     },
     "ask_source_doc_name": {
         "en": "Source document name (optional, e.g. \"W&B report #4\"):",
@@ -174,16 +170,6 @@ STRINGS: dict[str, dict[str, str]] = {
             "дополнениям, перечню оборудования и документации по центровке ВС. Топливное "
             "планирование, характеристики ВС, ВПП, погода и требования по резервам топлива не "
             "оцениваются."
-        ),
-    },
-    "ballast_disclaimer": {
-        "en": (
-            "Mathematically valid only. Any ballast or added load must be permitted by the "
-            "aircraft documents and properly secured."
-        ),
-        "ru": (
-            "Математически корректно, не более того. Любой балласт или добавленная нагрузка "
-            "должны быть разрешены документацией ВС и надёжно закреплены."
         ),
     },
     "select_aircraft_prompt": {"en": "Select an aircraft:", "ru": "Выберите ВС:"},
