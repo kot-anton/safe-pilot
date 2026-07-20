@@ -15,7 +15,6 @@ class StationType(str, Enum):
     PASSENGER = "PASSENGER"
     BAGGAGE = "BAGGAGE"
     FUEL = "FUEL"
-    BALLAST = "BALLAST"
     CUSTOM = "CUSTOM"
 
 
@@ -85,7 +84,7 @@ class AircraftProfile:
 
 @dataclass(frozen=True)
 class LoadItemInput:
-    """Non-fuel load at a station (passengers, baggage, ballast)."""
+    """Non-fuel load at a station (passengers, baggage)."""
 
     station_id: str
     weight_lb: Decimal

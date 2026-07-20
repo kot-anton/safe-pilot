@@ -1,5 +1,5 @@
 [project]
-name = "safe-pilot"
+name = "weight-and-balance"
 version = "1.0.0"
 description = "Telegram Weight & Balance bot for privately owned general aviation aircraft"
 requires-python = ">=3.12"

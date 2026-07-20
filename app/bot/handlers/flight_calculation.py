@@ -437,12 +437,7 @@ async def flight_review_confirm(
     await callback.message.answer("\n".join(lines))
 
     if result.overall_status != LimitStatus.WITHIN:
-        recs = flight_service.recommend(
-            profile,
-            calc_input,
-            min_fuel_gal=min_fuel_gal,
-            allow_added_ballast_recommendations=aircraft.allow_added_ballast_recommendations,
-        )
+        recs = flight_service.recommend(profile, calc_input, min_fuel_gal=min_fuel_gal)
         await callback.message.answer(_recommendation_text(recs, lang))
 
     await state.clear()

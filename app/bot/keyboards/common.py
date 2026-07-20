@@ -7,7 +7,6 @@ from aiogram.types import (
 
 from app.bot.texts.i18n import t
 from app.database.models import Aircraft, StationTypeEnum
-from app.domain.recommendations import BALLAST_DISCLAIMER  # noqa: F401  (re-exported for handlers)
 
 BACK_BUTTON = InlineKeyboardButton(text="◀ Back", callback_data="wizard:back")
 KEEP_BUTTON = InlineKeyboardButton(text="↩️ Keep current", callback_data="wizard:keep")
@@ -136,19 +135,21 @@ def arm_fixed_adjustable_keyboard(lang: str, *, show_back: bool = True) -> Inlin
 STATION_TYPE_DEFAULT_NAMES = {
     StationTypeEnum.FRONT_SEATS: "Front Seats",
     StationTypeEnum.REAR_SEATS: "Rear Seats",
-    StationTypeEnum.PASSENGER: "Passenger",
     StationTypeEnum.BAGGAGE: "Baggage Area",
     StationTypeEnum.FUEL: "Fuel Tank",
-    StationTypeEnum.BALLAST: "Ballast",
     StationTypeEnum.CUSTOM: "Custom Station",
 }
+# PASSENGER is deliberately excluded from the offered station types: occupants are always the
+# fixed FRONT_SEATS/REAR_SEATS combined-weight stations, never their own station type.
 
 
-def station_type_keyboard(lang: str, *, show_back: bool = True) -> InlineKeyboardMarkup:
+def station_type_keyboard(lang: str, *, show_back: bool = True, show_done: bool = False) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text=name, callback_data=f"stype:{key.value}")]
         for key, name in STATION_TYPE_DEFAULT_NAMES.items()
     ]
+    if show_done:
+        rows.append([InlineKeyboardButton(text="✅ Done, no more stations", callback_data="wizard:done_stations")])
     footer = []
     if show_back:
         footer.append(BACK_BUTTON)

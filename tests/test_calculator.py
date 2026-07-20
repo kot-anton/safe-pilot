@@ -190,9 +190,9 @@ def test_adjustable_arm_out_of_range_rejected():
     profile = make_test_profile(
         stations=[
             StationProfile(
-                station_id="ballast",
-                name="Ballast",
-                station_type=StationType.BALLAST,
+                station_id="custom1",
+                name="Custom Station",
+                station_type=StationType.CUSTOM,
                 default_arm_in=D("100"),
                 is_adjustable_arm=True,
                 minimum_arm_in=D("90"),
@@ -201,7 +201,7 @@ def test_adjustable_arm_out_of_range_rejected():
         ]
     )
     calc_input = CalculationInput(
-        loads=[LoadItemInput(station_id="ballast", weight_lb=D("10"), arm_in=D("200"))],
+        loads=[LoadItemInput(station_id="custom1", weight_lb=D("10"), arm_in=D("200"))],
         fuel=[],
     )
     with pytest.raises(InvalidInputError):

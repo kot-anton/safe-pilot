@@ -508,9 +508,7 @@ async def quick_calculate_confirm(
 
     if result.overall_status != LimitStatus.WITHIN:
         calc_input = _build_recommendation_input(profile, data, result)
-        recs = flight_service.recommend(
-            profile, calc_input, min_fuel_gal=None, allow_added_ballast_recommendations=aircraft.allow_added_ballast_recommendations
-        )
+        recs = flight_service.recommend(profile, calc_input, min_fuel_gal=None)
         if recs:
             rec_lines = ["CORRECTION"]
             for rec in recs[:1]:

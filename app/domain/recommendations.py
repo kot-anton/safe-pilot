@@ -27,18 +27,11 @@ FUEL_STEP_GAL = Decimal("0.1")
 LOAD_STEP_LB = Decimal("1")
 MAX_STEPS = 2000
 
-BALLAST_DISCLAIMER = (
-    "Mathematically valid only. Any ballast or added load must be permitted by the aircraft "
-    "documents and properly secured."
-)
-
-
 class RecommendationKind(str, Enum):
     REDUCE_FUEL = "REDUCE_FUEL"
     ADD_FUEL = "ADD_FUEL"
     REDUCE_BAGGAGE = "REDUCE_BAGGAGE"
     MOVE_LOAD = "MOVE_LOAD"
-    ADD_BALLAST = "ADD_BALLAST"
 
 
 @dataclass(frozen=True)
@@ -72,9 +65,6 @@ class Recommendation:
                 f"Move {self.delta_lb:.1f} lb ({kg:.1f} kg) from {self.station_name} "
                 f"to {self.target_station_name}."
             )
-        if self.kind == RecommendationKind.ADD_BALLAST:
-            kg = lb_to_kg(self.delta_lb)
-            return f"Add {self.delta_lb:.1f} lb ({kg:.1f} kg) ballast at {self.station_name}."
         return "Adjustment."
 
 
@@ -254,9 +244,9 @@ def _search_move_passengers(profile: AircraftProfile, calc_input: CalculationInp
 
 
 def _search_move_load(profile: AircraftProfile, calc_input: CalculationInput) -> list[Recommendation]:
-    """Only allowed between non-passenger stations (baggage/ballast/custom) — individual bags
+    """Only allowed between non-passenger stations (baggage/custom) — individual bags
     can be fully reassigned since they're not people."""
-    movable_types = {StationType.BAGGAGE, StationType.BALLAST, StationType.CUSTOM}
+    movable_types = {StationType.BAGGAGE, StationType.CUSTOM}
     movable_stations = [s for s in profile.stations if s.station_type in movable_types]
     results = []
     for source in movable_stations:
@@ -293,38 +283,11 @@ def _search_move_load(profile: AircraftProfile, calc_input: CalculationInput) ->
     return results
 
 
-def _search_add_ballast(profile: AircraftProfile, calc_input: CalculationInput) -> list[Recommendation]:
-    results = []
-    for station in profile.stations:
-        if station.station_type != StationType.BALLAST:
-            continue
-        current = _current_load_weight(calc_input, station.station_id)
-        headroom = station.maximum_weight_lb - current if station.maximum_weight_lb is not None else None
-        max_steps = int(headroom / LOAD_STEP_LB) if headroom is not None else MAX_STEPS
-        for step in range(1, min(max_steps, MAX_STEPS) + 1):
-            candidate_weight = current + LOAD_STEP_LB * step
-            candidate_input = _replace_load(calc_input, station.station_id, candidate_weight)
-            result = _try_calculate(profile, candidate_input)
-            if result and _is_acceptable(result.overall_status):
-                results.append(
-                    Recommendation(
-                        kind=RecommendationKind.ADD_BALLAST,
-                        station_id=station.station_id,
-                        station_name=station.name,
-                        delta_lb=LOAD_STEP_LB * step,
-                        note=BALLAST_DISCLAIMER,
-                    )
-                )
-                break
-    return results
-
-
 _CATEGORY_PRIORITY = {
     RecommendationKind.MOVE_LOAD: 0,
     RecommendationKind.REDUCE_BAGGAGE: 1,
     RecommendationKind.REDUCE_FUEL: 2,
     RecommendationKind.ADD_FUEL: 3,
-    RecommendationKind.ADD_BALLAST: 4,
 }
 
 
@@ -332,13 +295,12 @@ def generate_recommendations(
     profile: AircraftProfile,
     calc_input: CalculationInput,
     min_fuel_gal: dict[str, Decimal] | None = None,
-    allow_added_ballast_recommendations: bool = False,
     max_results: int = 3,
 ) -> list[Recommendation]:
     """Returns up to `max_results` verified, mathematically valid load adjustments.
 
     Search proceeds in the required preference order (move passengers/load, reduce baggage,
-    reduce fuel, add fuel, add ballast). That category order is the primary sort key --
+    reduce fuel, add fuel). That category order is the primary sort key --
     smallest-change-first is only the tiebreaker *within* a category, so e.g. a 2 lb fuel
     reduction never displaces a 1 lb load move from its preferred position.
     """
@@ -350,8 +312,6 @@ def generate_recommendations(
     ordered_candidates += _search_reduce_baggage(profile, calc_input)
     ordered_candidates += _search_reduce_fuel(profile, calc_input, min_fuel_gal)
     ordered_candidates += _search_add_fuel(profile, calc_input)
-    if allow_added_ballast_recommendations:
-        ordered_candidates += _search_add_ballast(profile, calc_input)
 
     ordered_candidates.sort(
         key=lambda r: (

@@ -40,14 +40,8 @@ class FlightService:
         profile: AircraftProfile,
         calc_input: CalculationInput,
         min_fuel_gal: dict[str, Decimal] | None,
-        allow_added_ballast_recommendations: bool,
     ) -> list[Recommendation]:
-        return generate_recommendations(
-            profile,
-            calc_input,
-            min_fuel_gal=min_fuel_gal,
-            allow_added_ballast_recommendations=allow_added_ballast_recommendations,
-        )
+        return generate_recommendations(profile, calc_input, min_fuel_gal=min_fuel_gal)
 
     async def persist_calculation(
         self,

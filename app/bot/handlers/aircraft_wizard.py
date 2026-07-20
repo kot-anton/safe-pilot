@@ -58,6 +58,11 @@ from app.services.aircraft_service import (
 
 router = Router(name="aircraft_wizard")
 
+# Standard avgas (100LL) density. We stopped asking pilots for this -- one gallon of avgas is
+# ~6 lb regardless of tank, and the extra question added friction without adding accuracy for
+# this app's use case.
+DEFAULT_FUEL_DENSITY_LB_PER_GAL = Decimal("6.0")
+
 
 def _lang(user: User) -> str:
     return user.language or "en"
@@ -65,6 +70,17 @@ def _lang(user: User) -> str:
 
 def _is_update(data: dict) -> bool:
     return bool(data.get("update_mode"))
+
+
+def _current_suffix(data: dict, key: str, unit: str = "") -> str:
+    """Shown only in update mode: reminds the pilot what's on file today, since typing a new
+    value is how they edit a field -- Keep current/Skip are for leaving it untouched."""
+    if not _is_update(data):
+        return ""
+    value = data.get(key)
+    if value is None:
+        return ""
+    return f"\n\n(current: {value}{unit} -- send a new value to change it, or tap Keep current to leave it as-is)"
 
 
 # ---------------------------------------------------------------------------
@@ -93,9 +109,8 @@ async def render_model(message: Message, state: FSMContext, user: User) -> None:
 async def render_empty_weight(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     data = await state.get_data()
-    suffix = f"\n(current: {data['basic_empty_weight_lb']} lb)" if data.get("basic_empty_weight_lb") else ""
     await message.answer(
-        t("ask_empty_weight", lang) + suffix,
+        t("ask_empty_weight", lang) + _current_suffix(data, "basic_empty_weight_lb", " lb"),
         reply_markup=keep_cancel_keyboard(lang, show_keep=_is_update(data)),
     )
 
@@ -103,7 +118,8 @@ async def render_empty_weight(message: Message, state: FSMContext, user: User) -
 async def render_cg_or_moment_choice(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     data = await state.get_data()
-    await message.answer(t("ask_cg_or_moment", lang), reply_markup=cg_or_moment_keyboard(lang, show_keep=_is_update(data)))
+    suffix = _current_suffix(data, "basic_empty_cg_in", " in") or _current_suffix(data, "basic_empty_moment_lb_in", " lb-in")
+    await message.answer(t("ask_cg_or_moment", lang) + suffix, reply_markup=cg_or_moment_keyboard(lang, show_keep=_is_update(data)))
 
 
 async def render_empty_cg(message: Message, state: FSMContext, user: User) -> None:
@@ -121,31 +137,46 @@ async def render_confirm_empty_record(message: Message, state: FSMContext, user:
 async def render_max_ramp_weight(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     data = await state.get_data()
-    await message.answer(t("ask_max_ramp_weight", lang), reply_markup=skip_cancel_keyboard(lang, show_keep=_is_update(data)))
+    await message.answer(
+        t("ask_max_ramp_weight", lang) + _current_suffix(data, "max_ramp_weight_lb", " lb"),
+        reply_markup=skip_cancel_keyboard(lang, show_keep=_is_update(data)),
+    )
 
 
 async def render_max_takeoff_weight(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     data = await state.get_data()
-    await message.answer(t("ask_max_takeoff_weight", lang), reply_markup=keep_cancel_keyboard(lang, show_keep=_is_update(data)))
+    await message.answer(
+        t("ask_max_takeoff_weight", lang) + _current_suffix(data, "max_takeoff_weight_lb", " lb"),
+        reply_markup=keep_cancel_keyboard(lang, show_keep=_is_update(data)),
+    )
 
 
 async def render_max_landing_weight(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     data = await state.get_data()
-    await message.answer(t("ask_max_landing_weight", lang), reply_markup=skip_cancel_keyboard(lang, show_keep=_is_update(data)))
+    await message.answer(
+        t("ask_max_landing_weight", lang) + _current_suffix(data, "max_landing_weight_lb", " lb"),
+        reply_markup=skip_cancel_keyboard(lang, show_keep=_is_update(data)),
+    )
 
 
 async def render_max_zfw(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     data = await state.get_data()
-    await message.answer(t("ask_max_zfw", lang), reply_markup=skip_cancel_keyboard(lang, show_keep=_is_update(data)))
+    await message.answer(
+        t("ask_max_zfw", lang) + _current_suffix(data, "max_zero_fuel_weight_lb", " lb"),
+        reply_markup=skip_cancel_keyboard(lang, show_keep=_is_update(data)),
+    )
 
 
 async def render_known_useful_load(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     data = await state.get_data()
-    await message.answer(t("ask_known_useful_load", lang), reply_markup=skip_cancel_keyboard(lang, show_keep=_is_update(data)))
+    await message.answer(
+        t("ask_known_useful_load", lang) + _current_suffix(data, "known_useful_load_lb", " lb"),
+        reply_markup=skip_cancel_keyboard(lang, show_keep=_is_update(data)),
+    )
 
 
 async def render_station_add_prompt(message: Message, state: FSMContext, user: User) -> None:
@@ -170,7 +201,11 @@ async def render_station_add_prompt(message: Message, state: FSMContext, user: U
 
 async def render_station_type(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
-    await message.answer(t("ask_station_type", lang), reply_markup=station_type_keyboard(lang))
+    data = await state.get_data()
+    has_stations = bool(data.get("stations"))
+    await message.answer(
+        t("ask_station_type", lang), reply_markup=station_type_keyboard(lang, show_done=has_stations)
+    )
 
 
 def _default_station_name(station_type_value: str, stations: list[dict]) -> str:
@@ -213,10 +248,6 @@ async def render_station_fuel_max_volume(message: Message, state: FSMContext, us
     await message.answer(t("ask_fuel_max_volume", _lang(user)), reply_markup=cancel_only_keyboard(_lang(user)))
 
 
-async def render_station_fuel_density(message: Message, state: FSMContext, user: User) -> None:
-    await message.answer(t("ask_fuel_density", _lang(user)), reply_markup=cancel_only_keyboard(_lang(user)))
-
-
 async def render_envelope_rows(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     data = await state.get_data()
@@ -241,13 +272,19 @@ async def render_envelope_rows(message: Message, state: FSMContext, user: User) 
 async def render_source_doc_name(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     data = await state.get_data()
-    await message.answer(t("ask_source_doc_name", lang), reply_markup=skip_cancel_keyboard(lang, show_keep=_is_update(data)))
+    await message.answer(
+        t("ask_source_doc_name", lang) + _current_suffix(data, "source_document_name"),
+        reply_markup=skip_cancel_keyboard(lang, show_keep=_is_update(data)),
+    )
 
 
 async def render_source_doc_date(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     data = await state.get_data()
-    await message.answer(t("ask_source_doc_date", lang), reply_markup=skip_cancel_keyboard(lang, show_keep=_is_update(data)))
+    await message.answer(
+        t("ask_source_doc_date", lang) + _current_suffix(data, "source_document_date"),
+        reply_markup=skip_cancel_keyboard(lang, show_keep=_is_update(data)),
+    )
 
 
 async def render_review(message: Message, state: FSMContext, user: User) -> None:
@@ -280,7 +317,6 @@ RENDERERS: dict[str, "callable"] = {
     AircraftWizard.station_max_arm.state: render_station_max_arm,
     AircraftWizard.station_max_weight.state: render_station_max_weight,
     AircraftWizard.station_fuel_max_volume.state: render_station_fuel_max_volume,
-    AircraftWizard.station_fuel_density.state: render_station_fuel_density,
     AircraftWizard.envelope_rows.state: render_envelope_rows,
     AircraftWizard.source_doc_name.state: render_source_doc_name,
     AircraftWizard.source_doc_date.state: render_source_doc_date,
@@ -319,7 +355,7 @@ async def start_wizard(message: Message, state: FSMContext, user: User) -> None:
     await message.answer(
         "Quick Setup asks only what's needed for a valid calculation (empty weight/CG, max "
         "takeoff weight, seats/baggage/fuel, CG envelope). Advanced Setup also covers ramp/"
-        "landing/ZFW weights, known useful load, ballast, and source documents.",
+        "landing/ZFW weights, known useful load, and source documents.",
         reply_markup=_setup_mode_keyboard(),
     )
 
@@ -696,6 +732,15 @@ async def stations_done(callback: CallbackQuery, state: FSMContext, user: User) 
     await callback.answer()
 
 
+@router.callback_query(AircraftWizard.station_type, F.data == "wizard:done_stations")
+async def done_stations_from_type_screen(callback: CallbackQuery, state: FSMContext, user: User) -> None:
+    """Escape hatch for pilots who land on the station-type picker (e.g. after tapping "Yes" by
+    habit) but actually have nothing more to add -- lets them finish without backing out to the
+    Add a station? prompt first."""
+    await goto(callback.message, state, user, AircraftWizard.envelope_rows, render_envelope_rows)
+    await callback.answer()
+
+
 @router.callback_query(AircraftWizard.station_type, F.data.startswith("stype:"))
 async def got_station_type(callback: CallbackQuery, state: FSMContext, user: User) -> None:
     station_type = callback.data.split(":", 1)[1]
@@ -723,9 +768,9 @@ async def use_default_station_name(callback: CallbackQuery, state: FSMContext, u
     await callback.answer()
 
 
-# Only ballast/custom stations are ever asked whether their ARM is adjustable -- seats,
-# baggage compartments, and fuel tanks are physically fixed locations in the airframe.
-_ADJUSTABLE_ARM_ELIGIBLE = {StationType.BALLAST.value, StationType.CUSTOM.value}
+# Only custom stations are ever asked whether their ARM is adjustable -- seats, baggage
+# compartments, and fuel tanks are physically fixed locations in the airframe.
+_ADJUSTABLE_ARM_ELIGIBLE = {StationType.CUSTOM.value}
 
 
 @router.message(AircraftWizard.station_arm)
@@ -823,23 +868,9 @@ async def got_fuel_max_volume(message: Message, state: FSMContext, user: User) -
     except InputParseError as exc:
         await message.answer(t("error_generic", lang, detail=str(exc)))
         return
-    await state.update_data(current_station_fuel_max_volume=str(value))
-    await goto(message, state, user, AircraftWizard.station_fuel_density, render_station_fuel_density)
-
-
-@router.message(AircraftWizard.station_fuel_density)
-async def got_fuel_density(message: Message, state: FSMContext, user: User) -> None:
-    lang = _lang(user)
-    try:
-        value = parse_decimal(message.text)
-        if value <= 0:
-            raise InputParseError("must be positive")
-    except InputParseError as exc:
-        await message.answer(t("error_generic", lang, detail=str(exc)))
-        return
-    data = await state.get_data()
-    max_volume = Decimal(data["current_station_fuel_max_volume"])
-    await _finalize_station(message, state, user, max_weight=None, fuel_max_volume=max_volume, fuel_density=value)
+    await _finalize_station(
+        message, state, user, max_weight=None, fuel_max_volume=value, fuel_density=DEFAULT_FUEL_DENSITY_LB_PER_GAL
+    )
 
 
 async def _finalize_station(
