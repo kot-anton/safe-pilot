@@ -1,19 +1,29 @@
 """New Calculation flow: collect loads and fuel for the active aircraft, run the domain
-calculator, persist a FlightCalculation snapshot, and render the result."""
+calculator, persist a FlightCalculation snapshot, and render the result.
+
+Navigation: this flow revisits the same FSM states once per station/tank (station #1's
+load question and station #2's load question are both `FlightWizard.load_at_station`), so
+plain state-name history (as used in aircraft_wizard.py) isn't enough to tell them apart.
+Instead each step pushes a small checkpoint -- `("load", index)` or
+`("fuel", index, field)` -- via `push_checkpoint`/`pop_checkpoint`, and the "◀ Back" button
+re-renders whichever checkpoint comes off the stack.
+"""
 from __future__ import annotations
 
 from decimal import Decimal
 
 from aiogram import F, Router
+from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State
 from aiogram.types import CallbackQuery, Message
 
 from app.bot.handlers._common import InputParseError, fmt, parse_decimal, parse_optional_decimal
+from app.bot.handlers.wizard_nav import pop_checkpoint, push_checkpoint
 from app.bot.keyboards.common import aircraft_list_keyboard, confirm_keyboard, main_menu_keyboard, skip_cancel_keyboard
 from app.bot.states.flight_wizard import FlightWizard
 from app.bot.texts.i18n import t
 from app.database.models import User
-from app.domain.calculator import ENGINE_VERSION
 from app.domain.envelope import LimitStatus
 from app.domain.models import CalculationInput, FuelStationInput, LoadItemInput, PhaseResult, StationType
 from app.domain.recommendations import Recommendation
@@ -91,6 +101,7 @@ async def _begin_for_aircraft(
         fuel_index=0,
         loads={},
         fuel={},
+        _nav_history=[],
     )
     banner = f"{t('unverified_banner', lang)}\n\n{profile.tail_number} -- rev. {profile.revision_number}"
     await message.answer(banner)
@@ -99,11 +110,56 @@ async def _begin_for_aircraft(
         await _ask_next_fuel_starting(message, state, user)
         return
 
+    await _render_load_prompt(message, state, user, 0, show_back=False)
+
+
+async def _render_load_prompt(message: Message, state: FSMContext, user: User, index: int, *, show_back: bool = True) -> None:
+    await state.update_data(load_index=index)
     await state.set_state(FlightWizard.load_at_station)
-    station = non_fuel_stations[0]
+    data = await state.get_data()
+    lang = _lang(user)
+    station_ids = data["non_fuel_station_ids"]
+    name = data.get("non_fuel_station_names", {}).get(station_ids[index], station_ids[index])
     await message.answer(
-        t("ask_load_at_station", lang, station=station.name), reply_markup=skip_cancel_keyboard(lang)
+        t("ask_load_at_station", lang, station=name), reply_markup=skip_cancel_keyboard(lang, show_back=show_back)
     )
+
+
+_FUEL_FIELD_STATE: dict[str, tuple[State, str]] = {
+    "starting": (FlightWizard.fuel_starting, "ask_fuel_starting"),
+    "taxi": (FlightWizard.fuel_taxi, "ask_fuel_taxi"),
+    "enroute": (FlightWizard.fuel_enroute, "ask_fuel_enroute"),
+    "minimum": (FlightWizard.fuel_minimum, "ask_min_fuel"),
+}
+
+
+async def _render_fuel_prompt(message: Message, state: FSMContext, user: User, index: int, field: str) -> None:
+    await state.update_data(fuel_index=index)
+    target_state, text_key = _FUEL_FIELD_STATE[field]
+    await state.set_state(target_state)
+    data = await state.get_data()
+    lang = _lang(user)
+    fuel_ids = data["fuel_station_ids"]
+    name = data.get("fuel_station_names", {}).get(fuel_ids[index], fuel_ids[index])
+    await message.answer(t(text_key, lang, station=name), reply_markup=skip_cancel_keyboard(lang))
+
+
+async def _cannot_go_back(callback: CallbackQuery) -> None:
+    await callback.answer("Already at the first step.")
+
+
+@router.callback_query(StateFilter(FlightWizard), F.data == "wizard:back")
+async def flight_back(callback: CallbackQuery, state: FSMContext, user: User) -> None:
+    checkpoint = await pop_checkpoint(state)
+    if checkpoint is None:
+        await _cannot_go_back(callback)
+        return
+    kind = checkpoint[0]
+    if kind == "load":
+        await _render_load_prompt(callback.message, state, user, checkpoint[1])
+    else:
+        await _render_fuel_prompt(callback.message, state, user, checkpoint[1], checkpoint[2])
+    await callback.answer()
 
 
 @router.message(FlightWizard.load_at_station)
@@ -119,22 +175,18 @@ async def got_load_at_station(message: Message, state: FSMContext, user: User) -
     index = data["load_index"]
     loads = data["loads"]
     loads[station_ids[index]] = str(weight)
-    index += 1
-    await state.update_data(loads=loads, load_index=index)
-    await _ask_next_load_or_fuel(message, state, user)
+    await state.update_data(loads=loads)
+    await push_checkpoint(state, ("load", index))
+    await _ask_next_load_or_fuel(message, state, user, index + 1)
 
 
-async def _ask_next_load_or_fuel(message: Message, state: FSMContext, user: User) -> None:
-    lang = _lang(user)
+async def _ask_next_load_or_fuel(message: Message, state: FSMContext, user: User, index: int) -> None:
     data = await state.get_data()
     station_ids = data["non_fuel_station_ids"]
-    index = data["load_index"]
     if index < len(station_ids):
-        station_names = data.get("non_fuel_station_names", {})
-        name = station_names.get(station_ids[index], station_ids[index])
-        await message.answer(t("ask_load_at_station", lang, station=name), reply_markup=skip_cancel_keyboard(lang))
+        await _render_load_prompt(message, state, user, index)
         return
-    await _ask_next_fuel_starting(message, state, user)
+    await _ask_next_fuel_starting(message, state, user, 0)
 
 
 @router.callback_query(FlightWizard.load_at_station, F.data == "wizard:skip")
@@ -144,23 +196,19 @@ async def skip_load_at_station(callback: CallbackQuery, state: FSMContext, user:
     index = data["load_index"]
     loads = data["loads"]
     loads[station_ids[index]] = "0"
-    await state.update_data(loads=loads, load_index=index + 1)
+    await state.update_data(loads=loads)
+    await push_checkpoint(state, ("load", index))
     await callback.answer()
-    await _ask_next_load_or_fuel(callback.message, state, user)
+    await _ask_next_load_or_fuel(callback.message, state, user, index + 1)
 
 
-async def _ask_next_fuel_starting(message: Message, state: FSMContext, user: User) -> None:
-    lang = _lang(user)
+async def _ask_next_fuel_starting(message: Message, state: FSMContext, user: User, index: int) -> None:
     data = await state.get_data()
     fuel_ids = data["fuel_station_ids"]
-    index = data["fuel_index"]
     if index >= len(fuel_ids):
         await _show_flight_review(message, state, user)
         return
-    await state.set_state(FlightWizard.fuel_starting)
-    names = data.get("fuel_station_names", {})
-    name = names.get(fuel_ids[index], fuel_ids[index])
-    await message.answer(t("ask_fuel_starting", lang, station=name), reply_markup=skip_cancel_keyboard(lang))
+    await _render_fuel_prompt(message, state, user, index, "starting")
 
 
 @router.message(FlightWizard.fuel_starting)
@@ -177,10 +225,8 @@ async def got_fuel_starting(message: Message, state: FSMContext, user: User) -> 
     fuel = data["fuel"]
     fuel[fuel_ids[index]] = {"starting_gal": str(gal)}
     await state.update_data(fuel=fuel)
-    await state.set_state(FlightWizard.fuel_taxi)
-    names = data.get("fuel_station_names", {})
-    name = names.get(fuel_ids[index], fuel_ids[index])
-    await message.answer(t("ask_fuel_taxi", lang, station=name), reply_markup=skip_cancel_keyboard(lang))
+    await push_checkpoint(state, ("fuel", index, "starting"))
+    await _render_fuel_prompt(message, state, user, index, "taxi")
 
 
 @router.message(FlightWizard.fuel_taxi)
@@ -191,35 +237,32 @@ async def got_fuel_taxi(message: Message, state: FSMContext, user: User) -> None
     except InputParseError as exc:
         await message.answer(t("error_generic", lang, detail=str(exc)))
         return
-    await _store_fuel_field_and_advance(message, state, user, "taxi_burn_gal", str(gal))
+    await _store_fuel_field_and_advance(message, state, user, "taxi", "taxi_burn_gal", str(gal))
 
 
 @router.callback_query(FlightWizard.fuel_taxi, F.data == "wizard:skip")
 async def skip_fuel_taxi(callback: CallbackQuery, state: FSMContext, user: User) -> None:
     await callback.answer()
-    await _store_fuel_field_and_advance(callback.message, state, user, "taxi_burn_gal", "0")
+    await _store_fuel_field_and_advance(callback.message, state, user, "taxi", "taxi_burn_gal", "0")
 
 
-async def _store_fuel_field_and_advance(message: Message, state: FSMContext, user: User, field: str, value: str) -> None:
+async def _store_fuel_field_and_advance(
+    message: Message, state: FSMContext, user: User, checkpoint_field: str, data_field: str, value: str
+) -> None:
     data = await state.get_data()
     fuel_ids = data["fuel_station_ids"]
     index = data["fuel_index"]
     fuel = data["fuel"]
-    fuel[fuel_ids[index]][field] = value
+    fuel[fuel_ids[index]][data_field] = value
     await state.update_data(fuel=fuel)
+    await push_checkpoint(state, ("fuel", index, checkpoint_field))
 
-    lang = _lang(user)
-    names = data.get("fuel_station_names", {})
-    name = names.get(fuel_ids[index], fuel_ids[index])
-    if field == "taxi_burn_gal":
-        await state.set_state(FlightWizard.fuel_enroute)
-        await message.answer(t("ask_fuel_enroute", lang, station=name), reply_markup=skip_cancel_keyboard(lang))
-    elif field == "enroute_burn_gal":
-        await state.set_state(FlightWizard.fuel_minimum)
-        await message.answer(t("ask_min_fuel", lang, station=name), reply_markup=skip_cancel_keyboard(lang))
-    elif field == "min_fuel_gal":
-        await state.update_data(fuel_index=index + 1)
-        await _ask_next_fuel_starting(message, state, user)
+    if checkpoint_field == "taxi":
+        await _render_fuel_prompt(message, state, user, index, "enroute")
+    elif checkpoint_field == "enroute":
+        await _render_fuel_prompt(message, state, user, index, "minimum")
+    elif checkpoint_field == "minimum":
+        await _ask_next_fuel_starting(message, state, user, index + 1)
 
 
 @router.message(FlightWizard.fuel_enroute)
@@ -230,13 +273,13 @@ async def got_fuel_enroute(message: Message, state: FSMContext, user: User) -> N
     except InputParseError as exc:
         await message.answer(t("error_generic", lang, detail=str(exc)))
         return
-    await _store_fuel_field_and_advance(message, state, user, "enroute_burn_gal", str(gal))
+    await _store_fuel_field_and_advance(message, state, user, "enroute", "enroute_burn_gal", str(gal))
 
 
 @router.callback_query(FlightWizard.fuel_enroute, F.data == "wizard:skip")
 async def skip_fuel_enroute(callback: CallbackQuery, state: FSMContext, user: User) -> None:
     await callback.answer()
-    await _store_fuel_field_and_advance(callback.message, state, user, "enroute_burn_gal", "0")
+    await _store_fuel_field_and_advance(callback.message, state, user, "enroute", "enroute_burn_gal", "0")
 
 
 @router.message(FlightWizard.fuel_minimum)
@@ -247,13 +290,15 @@ async def got_fuel_minimum(message: Message, state: FSMContext, user: User) -> N
     except InputParseError as exc:
         await message.answer(t("error_generic", lang, detail=str(exc)))
         return
-    await _store_fuel_field_and_advance(message, state, user, "min_fuel_gal", str(gal) if gal is not None else "")
+    await _store_fuel_field_and_advance(
+        message, state, user, "minimum", "min_fuel_gal", str(gal) if gal is not None else ""
+    )
 
 
 @router.callback_query(FlightWizard.fuel_minimum, F.data == "wizard:skip")
 async def skip_fuel_minimum(callback: CallbackQuery, state: FSMContext, user: User) -> None:
     await callback.answer()
-    await _store_fuel_field_and_advance(callback.message, state, user, "min_fuel_gal", "")
+    await _store_fuel_field_and_advance(callback.message, state, user, "minimum", "min_fuel_gal", "")
 
 
 async def _show_flight_review(message: Message, state: FSMContext, user: User) -> None:
@@ -382,7 +427,7 @@ async def flight_review_confirm(
     lines.append("")
     lines.append(t("disclaimer", lang))
 
-    await callback.message.edit_text("\n".join(lines))
+    await callback.message.answer("\n".join(lines))
 
     if result.overall_status != LimitStatus.WITHIN:
         recs = flight_service.recommend(

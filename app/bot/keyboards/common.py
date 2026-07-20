@@ -9,6 +9,9 @@ from app.bot.texts.i18n import t
 from app.database.models import Aircraft, StationTypeEnum
 from app.domain.recommendations import BALLAST_DISCLAIMER  # noqa: F401  (re-exported for handlers)
 
+BACK_BUTTON = InlineKeyboardButton(text="◀ Back", callback_data="wizard:back")
+KEEP_BUTTON = InlineKeyboardButton(text="↩️ Keep current", callback_data="wizard:keep")
+
 
 def main_menu_keyboard(lang: str) -> ReplyKeyboardMarkup:
     rows = [
@@ -24,72 +27,84 @@ def main_menu_keyboard(lang: str) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
-def skip_cancel_keyboard(lang: str, *, show_keep: bool = False) -> InlineKeyboardMarkup:
+def skip_cancel_keyboard(lang: str, *, show_keep: bool = False, show_back: bool = True) -> InlineKeyboardMarkup:
     row = []
     if show_keep:
-        row.append(InlineKeyboardButton(text="↩️ Keep current", callback_data="wizard:keep"))
+        row.append(KEEP_BUTTON)
     row.append(InlineKeyboardButton(text=t("btn_skip", lang), callback_data="wizard:skip"))
-    row.append(InlineKeyboardButton(text=t("btn_cancel", lang), callback_data="wizard:cancel"))
-    return InlineKeyboardMarkup(inline_keyboard=[row])
+    rows = [row]
+    footer = []
+    if show_back:
+        footer.append(BACK_BUTTON)
+    footer.append(InlineKeyboardButton(text=t("btn_cancel", lang), callback_data="wizard:cancel"))
+    rows.append(footer)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def keep_cancel_keyboard(lang: str, *, show_keep: bool = False) -> InlineKeyboardMarkup:
+def keep_cancel_keyboard(lang: str, *, show_keep: bool = False, show_back: bool = True) -> InlineKeyboardMarkup:
     """For required fields: no Skip, but Keep current is offered in update mode."""
-    row = []
+    rows = []
     if show_keep:
-        row.append(InlineKeyboardButton(text="↩️ Keep current", callback_data="wizard:keep"))
+        rows.append([KEEP_BUTTON])
+    footer = []
+    if show_back:
+        footer.append(BACK_BUTTON)
+    footer.append(InlineKeyboardButton(text=t("btn_cancel", lang), callback_data="wizard:cancel"))
+    rows.append(footer)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def cancel_only_keyboard(lang: str, *, show_back: bool = True) -> InlineKeyboardMarkup:
+    row = []
+    if show_back:
+        row.append(BACK_BUTTON)
     row.append(InlineKeyboardButton(text=t("btn_cancel", lang), callback_data="wizard:cancel"))
     return InlineKeyboardMarkup(inline_keyboard=[row])
 
 
-def cancel_only_keyboard(lang: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text=t("btn_cancel", lang), callback_data="wizard:cancel")]]
-    )
+def confirm_keyboard(lang: str, *, show_back: bool = True) -> InlineKeyboardMarkup:
+    row = [InlineKeyboardButton(text=t("btn_confirm", lang), callback_data="wizard:confirm")]
+    if show_back:
+        row.append(BACK_BUTTON)
+    row.append(InlineKeyboardButton(text=t("btn_cancel", lang), callback_data="wizard:cancel"))
+    return InlineKeyboardMarkup(inline_keyboard=[row])
 
 
-def confirm_keyboard(lang: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text=t("btn_confirm", lang), callback_data="wizard:confirm"),
-                InlineKeyboardButton(text=t("btn_edit", lang), callback_data="wizard:edit"),
-                InlineKeyboardButton(text=t("btn_cancel", lang), callback_data="wizard:cancel"),
-            ]
+def yes_no_keyboard(lang: str, *, show_back: bool = True) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(text=t("btn_yes", lang), callback_data="wizard:yes"),
+            InlineKeyboardButton(text=t("btn_no", lang), callback_data="wizard:no"),
         ]
-    )
+    ]
+    if show_back:
+        rows.append([BACK_BUTTON])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def yes_no_keyboard(lang: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text=t("btn_yes", lang), callback_data="wizard:yes"),
-                InlineKeyboardButton(text=t("btn_no", lang), callback_data="wizard:no"),
-            ]
-        ]
-    )
-
-
-def cg_or_moment_keyboard(lang: str, *, show_keep: bool = False) -> InlineKeyboardMarkup:
+def cg_or_moment_keyboard(lang: str, *, show_keep: bool = False, show_back: bool = True) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text=t("btn_know_cg", lang), callback_data="wizard:know_cg")],
         [InlineKeyboardButton(text=t("btn_know_moment", lang), callback_data="wizard:know_moment")],
     ]
     if show_keep:
         rows.append([InlineKeyboardButton(text="↩️ Keep current CG/Moment", callback_data="wizard:keep_cg_moment")])
+    if show_back:
+        rows.append([BACK_BUTTON])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def arm_fixed_adjustable_keyboard(lang: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text=t("btn_arm_fixed", lang), callback_data="wizard:arm_fixed"),
-                InlineKeyboardButton(text=t("btn_arm_adjustable", lang), callback_data="wizard:arm_adjustable"),
-            ]
-        ]
-    )
+def arm_fixed_adjustable_keyboard(lang: str, *, show_back: bool = True) -> InlineKeyboardMarkup:
+    """Fixed ARM is the common case (one published number) and gets the prominent button.
+    Adjustable (a published forward/aft range, e.g. some adjustable seat rails) is offered
+    as a secondary, opt-in option -- not asked as if it were equally likely by default."""
+    rows = [
+        [InlineKeyboardButton(text=f"✅ {t('btn_arm_fixed', lang)}", callback_data="wizard:arm_fixed")],
+        [InlineKeyboardButton(text=f"⚙️ Advanced: {t('btn_arm_adjustable', lang)}", callback_data="wizard:arm_adjustable")],
+    ]
+    if show_back:
+        rows.append([BACK_BUTTON])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 STATION_TYPE_DEFAULT_NAMES = {
@@ -103,21 +118,39 @@ STATION_TYPE_DEFAULT_NAMES = {
 }
 
 
-def station_type_keyboard() -> InlineKeyboardMarkup:
+def station_type_keyboard(lang: str, *, show_back: bool = True) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text=name, callback_data=f"stype:{key.value}")]
         for key, name in STATION_TYPE_DEFAULT_NAMES.items()
     ]
+    footer = []
+    if show_back:
+        footer.append(BACK_BUTTON)
+    footer.append(InlineKeyboardButton(text=t("btn_cancel", lang), callback_data="wizard:cancel"))
+    rows.append(footer)
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def add_another_station_keyboard(lang: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=t("btn_add_another_station", lang), callback_data="wizard:add_station")],
-            [InlineKeyboardButton(text=t("btn_done_adding_stations", lang), callback_data="wizard:stations_done")],
-        ]
-    )
+def station_name_keyboard(lang: str, default_name: str, *, show_back: bool = True) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text=f"✅ Use \"{default_name}\"", callback_data="wizard:use_default_name")]]
+    footer = []
+    if show_back:
+        footer.append(BACK_BUTTON)
+    footer.append(InlineKeyboardButton(text=t("btn_cancel", lang), callback_data="wizard:cancel"))
+    rows.append(footer)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def envelope_keyboard(lang: str, *, has_rows: bool = False, show_back: bool = True) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text="✅ Done", callback_data="wizard:envelope_done")]]
+    if has_rows:
+        rows.append([InlineKeyboardButton(text="↩️ Undo last row", callback_data="wizard:undo_last_row")])
+    footer = []
+    if show_back:
+        footer.append(BACK_BUTTON)
+    footer.append(InlineKeyboardButton(text=t("btn_cancel", lang), callback_data="wizard:cancel"))
+    rows.append(footer)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def aircraft_list_keyboard(aircraft_list: list[Aircraft], prefix: str) -> InlineKeyboardMarkup:

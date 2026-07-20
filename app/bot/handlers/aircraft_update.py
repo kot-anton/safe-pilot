@@ -11,7 +11,9 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from app.bot.keyboards.common import aircraft_list_keyboard, keep_cancel_keyboard
+from app.bot.handlers.aircraft_wizard import render_empty_weight
+from app.bot.handlers.wizard_nav import goto
+from app.bot.keyboards.common import aircraft_list_keyboard
 from app.bot.states.aircraft_wizard import AircraftWizard
 from app.bot.texts.i18n import t
 from app.database.models import User
@@ -92,10 +94,6 @@ async def update_aircraft_chosen(
         stations=stations,
         envelope_rows=envelope_rows,
     )
-    await state.set_state(AircraftWizard.empty_weight)
-    await callback.message.edit_text(
-        f"Updating {aircraft.tail_number} (currently rev. {revision.revision_number}).\n\n"
-        f"{t('ask_empty_weight', lang)}\n(current: {revision.basic_empty_weight_lb} lb)"
-    )
-    await callback.message.answer("...", reply_markup=keep_cancel_keyboard(lang, show_keep=True))
+    await callback.message.answer(f"Updating {aircraft.tail_number} (currently rev. {revision.revision_number}).")
+    await goto(callback.message, state, user, AircraftWizard.empty_weight, render_empty_weight, record_history=False)
     await callback.answer()
