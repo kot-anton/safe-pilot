@@ -1,0 +1,36 @@
+services:
+  bot:
+    build: .
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-sqlite+aiosqlite:///./data/safe_pilot.db}
+    volumes:
+      - safe_pilot_data:/app/data
+    restart: unless-stopped
+    # Uncomment "depends_on" if you switch DATABASE_URL to the db service below.
+    # depends_on:
+    #   db:
+    #     condition: service_healthy
+
+  # Optional PostgreSQL service for production use. To enable:
+  #   1. Uncomment this service and the volume below.
+  #   2. Set DATABASE_URL=postgresql+asyncpg://safe_pilot:safe_pilot@db:5432/safe_pilot in .env
+  #   3. Uncomment "depends_on" above.
+  # db:
+  #   image: postgres:16-alpine
+  #   environment:
+  #     POSTGRES_USER: safe_pilot
+  #     POSTGRES_PASSWORD: safe_pilot
+  #     POSTGRES_DB: safe_pilot
+  #   volumes:
+  #     - safe_pilot_pg_data:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U safe_pilot"]
+  #     interval: 5s
+  #     timeout: 5s
+  #     retries: 5
+
+volumes:
+  safe_pilot_data:
+  # safe_pilot_pg_data:
