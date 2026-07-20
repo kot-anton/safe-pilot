@@ -160,3 +160,72 @@ def test_recommendation_never_reduces_fuel_below_pilot_minimum():
     for rec in fuel_recs:
         remaining = D("40") - rec.delta_gal
         assert remaining >= D("39.9")
+
+
+def test_recommendation_moves_weight_from_front_to_rear_seats():
+    """Front-heavy loading pushes CG forward of the limit; moving some of that weight to the
+    rear seats should be offered, respecting the actual seat station (not baggage)."""
+    from app.domain.envelope import CGEnvelope, EnvelopeRow
+    from app.domain.models import AircraftProfile, StationProfile, StationType
+
+    profile = AircraftProfile(
+        tail_number="N77777",
+        revision_number=1,
+        basic_empty_weight_lb=D("1000"),
+        basic_empty_moment_lb_in=D("50000"),  # cg 50.0
+        max_takeoff_weight_lb=D("2000"),
+        stations=[
+            StationProfile(
+                station_id="front", name="Front Seats", station_type=StationType.FRONT_SEATS,
+                default_arm_in=D("30"),
+            ),
+            StationProfile(
+                station_id="rear", name="Rear Seats", station_type=StationType.REAR_SEATS,
+                default_arm_in=D("70"),
+            ),
+            StationProfile(
+                station_id="fuel", name="Fuel", station_type=StationType.FUEL,
+                default_arm_in=D("50"), maximum_volume_gal=D("30"), fuel_density_lb_per_gal=D("6"),
+            ),
+        ],
+        envelope=CGEnvelope([EnvelopeRow(D("1200"), D("45"), D("55")), EnvelopeRow(D("1600"), D("45"), D("55"))]),
+    )
+    calc_input = CalculationInput(
+        loads=[
+            LoadItemInput(station_id="front", weight_lb=D("500")),
+            LoadItemInput(station_id="rear", weight_lb=D("0")),
+        ],
+        fuel=[FuelStationInput(station_id="fuel", starting_gal=D("10"))],
+    )
+    result = calculate(profile, calc_input)
+    assert result.ramp.cg_check.status == LimitStatus.OUT_OF_LIMITS  # forward of limit
+
+    recs = generate_recommendations(profile, calc_input)
+    move_recs = [r for r in recs if r.kind == RecommendationKind.MOVE_LOAD]
+    assert move_recs
+    assert move_recs[0].station_id == "front"
+    assert move_recs[0].target_station_id == "rear"
+    assert "occupant" in move_recs[0].note.lower()
+
+    rec = move_recs[0]
+    fixed_input = CalculationInput(
+        loads=[
+            LoadItemInput(station_id="front", weight_lb=D("500") - rec.delta_lb),
+            LoadItemInput(station_id="rear", weight_lb=rec.delta_lb),
+        ],
+        fuel=calc_input.fuel,
+    )
+    fixed_result = calculate(profile, fixed_input)
+    assert fixed_result.overall_status != LimitStatus.OUT_OF_LIMITS
+
+
+def test_recommendations_preserve_category_priority_over_raw_delta():
+    """A tiny fuel-only fix must not outrank a load-move recommendation just because its
+    delta is numerically smaller -- category order comes first."""
+    from app.domain.recommendations import Recommendation, RecommendationKind, _CATEGORY_PRIORITY
+
+    move = Recommendation(kind=RecommendationKind.MOVE_LOAD, station_id="a", station_name="A", delta_lb=D("50"))
+    fuel = Recommendation(kind=RecommendationKind.REDUCE_FUEL, station_id="b", station_name="B", delta_lb=D("1"))
+    candidates = [fuel, move]
+    candidates.sort(key=lambda r: (_CATEGORY_PRIORITY[r.kind], r.delta_lb))
+    assert candidates[0] is move

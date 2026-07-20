@@ -13,6 +13,7 @@ from enum import Enum
 
 from app.domain.calculator import calculate
 from app.domain.envelope import LimitStatus
+from app.domain.exceptions import DomainError
 from app.domain.models import (
     AircraftProfile,
     CalculationInput,
@@ -82,9 +83,13 @@ def _is_acceptable(status: LimitStatus) -> bool:
 
 
 def _try_calculate(profile: AircraftProfile, calc_input: CalculationInput):
+    """Recommendation search tries many candidate inputs, some of which are expected to be
+    invalid (e.g. a candidate fuel load that would exceed a tank someone else already filled
+    differently) -- those are just rejected candidates. Anything else is a real bug and must
+    not be swallowed silently."""
     try:
         return calculate(profile, calc_input)
-    except Exception:
+    except DomainError:
         return None
 
 
@@ -200,9 +205,57 @@ def _search_reduce_baggage(profile: AircraftProfile, calc_input: CalculationInpu
     return results
 
 
+PASSENGER_MOVE_NOTE = (
+    "Use actual occupant weights and permitted seating positions -- this does not mean part "
+    "of one person can be moved. It reflects the minimum total reseating needed."
+)
+
+
+def _search_move_passengers(profile: AircraftProfile, calc_input: CalculationInput) -> list[Recommendation]:
+    """Front/rear seat inputs are aggregated occupant totals, not individual people -- so a
+    'move weight' recommendation here means reseating occupants between rows (e.g. moving a
+    passenger to the back seat), not fractionally splitting a person."""
+    seat_types = {StationType.FRONT_SEATS, StationType.REAR_SEATS}
+    seat_stations = [s for s in profile.stations if s.station_type in seat_types]
+    results = []
+    for source in seat_stations:
+        source_weight = _current_load_weight(calc_input, source.station_id)
+        if source_weight <= 0:
+            continue
+        for dest in seat_stations:
+            if dest.station_id == source.station_id:
+                continue
+            dest_weight = _current_load_weight(calc_input, dest.station_id)
+            headroom = source_weight
+            if dest.maximum_weight_lb is not None:
+                headroom = min(headroom, dest.maximum_weight_lb - dest_weight)
+            if headroom <= 0:
+                continue
+            steps = int(headroom / LOAD_STEP_LB)
+            for step in range(1, min(steps, MAX_STEPS) + 1):
+                delta = LOAD_STEP_LB * step
+                candidate_input = _replace_load(calc_input, source.station_id, source_weight - delta)
+                candidate_input = _replace_load(candidate_input, dest.station_id, dest_weight + delta)
+                result = _try_calculate(profile, candidate_input)
+                if result and _is_acceptable(result.overall_status):
+                    results.append(
+                        Recommendation(
+                            kind=RecommendationKind.MOVE_LOAD,
+                            station_id=source.station_id,
+                            station_name=source.name,
+                            target_station_id=dest.station_id,
+                            target_station_name=dest.name,
+                            delta_lb=delta,
+                            note=PASSENGER_MOVE_NOTE,
+                        )
+                    )
+                    break
+    return results
+
+
 def _search_move_load(profile: AircraftProfile, calc_input: CalculationInput) -> list[Recommendation]:
-    """Only allowed between non-passenger stations (baggage/ballast/custom) — passengers cannot
-    be fractionally reassigned."""
+    """Only allowed between non-passenger stations (baggage/ballast/custom) — individual bags
+    can be fully reassigned since they're not people."""
     movable_types = {StationType.BAGGAGE, StationType.BALLAST, StationType.CUSTOM}
     movable_stations = [s for s in profile.stations if s.station_type in movable_types]
     results = []
@@ -266,6 +319,15 @@ def _search_add_ballast(profile: AircraftProfile, calc_input: CalculationInput) 
     return results
 
 
+_CATEGORY_PRIORITY = {
+    RecommendationKind.MOVE_LOAD: 0,
+    RecommendationKind.REDUCE_BAGGAGE: 1,
+    RecommendationKind.REDUCE_FUEL: 2,
+    RecommendationKind.ADD_FUEL: 3,
+    RecommendationKind.ADD_BALLAST: 4,
+}
+
+
 def generate_recommendations(
     profile: AircraftProfile,
     calc_input: CalculationInput,
@@ -275,12 +337,15 @@ def generate_recommendations(
 ) -> list[Recommendation]:
     """Returns up to `max_results` verified, mathematically valid load adjustments.
 
-    Search proceeds in the required preference order (move load, reduce baggage, reduce fuel,
-    add fuel, add ballast); results are then presented smallest-change-first.
+    Search proceeds in the required preference order (move passengers/load, reduce baggage,
+    reduce fuel, add fuel, add ballast). That category order is the primary sort key --
+    smallest-change-first is only the tiebreaker *within* a category, so e.g. a 2 lb fuel
+    reduction never displaces a 1 lb load move from its preferred position.
     """
     min_fuel_gal = min_fuel_gal or {}
 
     ordered_candidates: list[Recommendation] = []
+    ordered_candidates += _search_move_passengers(profile, calc_input)
     ordered_candidates += _search_move_load(profile, calc_input)
     ordered_candidates += _search_reduce_baggage(profile, calc_input)
     ordered_candidates += _search_reduce_fuel(profile, calc_input, min_fuel_gal)
@@ -288,5 +353,10 @@ def generate_recommendations(
     if allow_added_ballast_recommendations:
         ordered_candidates += _search_add_ballast(profile, calc_input)
 
-    ordered_candidates.sort(key=lambda r: r.delta_lb if r.delta_lb is not None else Decimal("0"))
+    ordered_candidates.sort(
+        key=lambda r: (
+            _CATEGORY_PRIORITY.get(r.kind, 99),
+            r.delta_lb if r.delta_lb is not None else Decimal("0"),
+        )
+    )
     return ordered_candidates[:max_results]

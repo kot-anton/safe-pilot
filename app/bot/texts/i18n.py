@@ -23,10 +23,14 @@ STRINGS: dict[str, dict[str, str]] = {
     },
     "menu_my_aircraft": {"en": "My Aircraft", "ru": "Мои ВС"},
     "menu_add_aircraft": {"en": "Add Aircraft", "ru": "Добавить ВС"},
-    "menu_select_aircraft": {"en": "Select Aircraft", "ru": "Выбрать ВС"},
-    "menu_update_aircraft": {"en": "Update Aircraft", "ru": "Обновить ВС"},
+    "menu_select_aircraft": {"en": "🛩 Change Aircraft", "ru": "🛩 Сменить ВС"},
+    "menu_update_aircraft": {"en": "Edit Aircraft", "ru": "Изменить ВС"},
     "menu_archive_aircraft": {"en": "Archive Aircraft", "ru": "Архивировать ВС"},
-    "menu_new_calc": {"en": "New Calculation", "ru": "Новый расчёт"},
+    "menu_rental_aircraft": {"en": "Temporary / Rental Aircraft", "ru": "Временное / арендованное ВС"},
+    "menu_new_calc": {"en": "✈️ Calculate", "ru": "✈️ Рассчитать"},
+    "menu_aircraft_submenu": {"en": "🛩 Aircraft", "ru": "🛩 Самолёт"},
+    "menu_more_submenu": {"en": "⚙️ More", "ru": "⚙️ Ещё"},
+    "menu_back": {"en": "« Main menu", "ru": "« Главное меню"},
     "menu_history": {"en": "Calculation History", "ru": "История расчётов"},
     "menu_help": {"en": "Help", "ru": "Помощь"},
     "menu_cancel": {"en": "Cancel", "ru": "Отмена"},
@@ -154,6 +158,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "UNVERIFIED -- Calculations use user-entered aircraft values. Aircraft-specific records have not been independently verified.",
         "ru": "НЕ ПРОВЕРЕНО -- Расчёты используют данные, введённые пользователем. Документы ВС независимо не проверялись.",
     },
+    "result_footer": {
+        "en": "Based on the saved aircraft profile. Verify against current aircraft records.",
+        "ru": "На основе сохранённого профиля ВС. Сверьте с актуальной документацией ВС.",
+    },
     "disclaimer": {
         "en": (
             "Weight & Balance calculation only. Verify all values against the current POH/AFM, "
@@ -181,8 +189,11 @@ STRINGS: dict[str, dict[str, str]] = {
     "select_aircraft_prompt": {"en": "Select an aircraft:", "ru": "Выберите ВС:"},
     "aircraft_selected": {"en": "Active aircraft set.", "ru": "Активное ВС установлено."},
     "ask_load_at_station": {"en": "Load at {station}, in lb (Enter 0 if none):", "ru": "Нагрузка на {station}, в фунтах (0, если нет):"},
+    "ask_load_at_seat_station": {
+        "en": "Combined weight of all occupants at {station}, in lb (Enter 0 if empty):",
+        "ru": "Суммарный вес всех пассажиров на {station}, в фунтах (0, если пусто):",
+    },
     "ask_fuel_starting": {"en": "Starting fuel in {station}, in US gal:", "ru": "Начальное топливо в {station}, в US гал:"},
-    "ask_fuel_taxi": {"en": "Taxi fuel burn from {station}, in US gal (optional, Skip = 0):", "ru": "Расход на руление из {station}, US гал (необязательно, Пропустить = 0):"},
     "ask_fuel_enroute": {
         "en": "Planned enroute fuel burn from {station}, in US gal (optional -- Skip if unknown; landing will then not be evaluated):",
         "ru": "Плановый расход в полёте из {station}, US гал (необязательно -- без этого посадка не будет оценена):",

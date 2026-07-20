@@ -15,16 +15,42 @@ KEEP_BUTTON = InlineKeyboardButton(text="↩️ Keep current", callback_data="wi
 
 def main_menu_keyboard(lang: str) -> ReplyKeyboardMarkup:
     rows = [
-        [KeyboardButton(text=t("menu_new_calc", lang)), KeyboardButton(text=t("menu_history", lang))],
-        [KeyboardButton(text=t("menu_my_aircraft", lang)), KeyboardButton(text=t("menu_add_aircraft", lang))],
         [
-            KeyboardButton(text=t("menu_select_aircraft", lang)),
-            KeyboardButton(text=t("menu_update_aircraft", lang)),
+            KeyboardButton(text=t("menu_new_calc", lang)),
+            KeyboardButton(text=t("menu_aircraft_submenu", lang)),
+            KeyboardButton(text=t("menu_more_submenu", lang)),
         ],
-        [KeyboardButton(text=t("menu_archive_aircraft", lang)), KeyboardButton(text=t("menu_help", lang))],
-        [KeyboardButton(text=t("menu_cancel", lang))],
     ]
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+
+
+def aircraft_submenu_keyboard(lang: str) -> ReplyKeyboardMarkup:
+    rows = [
+        [KeyboardButton(text=t("menu_select_aircraft", lang)), KeyboardButton(text=t("menu_add_aircraft", lang))],
+        [KeyboardButton(text=t("menu_update_aircraft", lang)), KeyboardButton(text=t("menu_rental_aircraft", lang))],
+        [KeyboardButton(text=t("menu_archive_aircraft", lang)), KeyboardButton(text=t("menu_my_aircraft", lang))],
+        [KeyboardButton(text=t("menu_back", lang))],
+    ]
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+
+
+def more_submenu_keyboard(lang: str) -> ReplyKeyboardMarkup:
+    rows = [
+        [KeyboardButton(text=t("menu_history", lang)), KeyboardButton(text=t("menu_help", lang))],
+        [KeyboardButton(text=t("menu_back", lang))],
+    ]
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+
+
+def aircraft_card_keyboard(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=t("menu_new_calc", lang), callback_data="card:calculate"),
+                InlineKeyboardButton(text=t("menu_select_aircraft", lang), callback_data="card:change_aircraft"),
+            ]
+        ]
+    )
 
 
 def skip_cancel_keyboard(lang: str, *, show_keep: bool = False, show_back: bool = True) -> InlineKeyboardMarkup:
@@ -145,6 +171,10 @@ def envelope_keyboard(lang: str, *, has_rows: bool = False, show_back: bool = Tr
     rows = [[InlineKeyboardButton(text="✅ Done", callback_data="wizard:envelope_done")]]
     if has_rows:
         rows.append([InlineKeyboardButton(text="↩️ Undo last row", callback_data="wizard:undo_last_row")])
+    if not has_rows:
+        rows.append(
+            [InlineKeyboardButton(text="⚠️ Skip -- don't check CG for this aircraft", callback_data="wizard:skip_envelope")]
+        )
     footer = []
     if show_back:
         footer.append(BACK_BUTTON)

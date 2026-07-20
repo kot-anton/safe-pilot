@@ -131,7 +131,9 @@ def _build_phase(
         total_moment += r.moment_lb_in
 
     cg = total_moment / total_weight if total_weight != 0 else Decimal("0")
-    cg_check = profile.envelope.check(total_weight, cg)
+    # A missing envelope means the pilot has not entered one for this aircraft -- the bot
+    # never invents CG limits, so CG is simply not evaluated rather than assumed safe.
+    cg_check = profile.envelope.check(total_weight, cg) if profile.envelope is not None else None
 
     weight_status = LimitStatus.WITHIN
     if weight_limit is not None:
@@ -145,7 +147,9 @@ def _build_phase(
         if r.over_station_limit or r.over_capacity:
             station_status = LimitStatus.OUT_OF_LIMITS
 
-    overall = _worse(_worse(weight_status, cg_check.status), station_status)
+    overall = _worse(weight_status, station_status)
+    if cg_check is not None:
+        overall = _worse(overall, cg_check.status)
 
     return PhaseResult(
         phase=phase_name,
