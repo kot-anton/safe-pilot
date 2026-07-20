@@ -10,6 +10,7 @@ re-renders whichever checkpoint comes off the stack.
 """
 from __future__ import annotations
 
+import json
 from decimal import Decimal
 
 from aiogram import F, Router
@@ -49,10 +50,13 @@ async def _load_profile_and_aircraft(user_id: int, aircraft_id: int, aircraft_se
     return aircraft, build_domain_profile(revision, aircraft)
 
 
-@router.message(F.text.in_({t("menu_new_calc", "en"), t("menu_new_calc", "ru")}))
 async def start_calculation(
     message: Message, state: FSMContext, user: User, aircraft_service: AircraftService
 ) -> None:
+    """The full per-tank/per-station "Advanced" calculation -- taxi/enroute burn, minimum
+    fuel, exact per-tank amounts, ramp/takeoff/landing. Reached via the "Advanced / Landing"
+    button on a quick-calculation result (see app.bot.handlers.quick_calculate), not from the
+    main menu directly -- the standard flow for routine use is the 4-question quick calculate."""
     lang = _lang(user)
     await state.clear()
     if user.selected_aircraft_id:
@@ -66,6 +70,14 @@ async def start_calculation(
     await message.answer(
         t("select_aircraft_prompt", lang), reply_markup=aircraft_list_keyboard(aircraft_list, "calc_select")
     )
+
+
+@router.callback_query(F.data == "quick:advanced")
+async def advanced_from_quick(
+    callback: CallbackQuery, state: FSMContext, user: User, aircraft_service: AircraftService
+) -> None:
+    await callback.answer()
+    await start_calculation(callback.message, state, user, aircraft_service)
 
 
 @router.callback_query(FlightWizard.select_aircraft, F.data.startswith("calc_select:"))
@@ -95,6 +107,7 @@ async def _begin_for_aircraft(
         tail_number=profile.tail_number,
         non_fuel_station_ids=[s.station_id for s in non_fuel_stations],
         non_fuel_station_names={s.station_id: s.name for s in non_fuel_stations},
+        non_fuel_station_types={s.station_id: s.station_type.value for s in non_fuel_stations},
         fuel_station_ids=[s.station_id for s in fuel_stations],
         fuel_station_names={s.station_id: s.name for s in fuel_stations},
         load_index=0,
@@ -103,8 +116,7 @@ async def _begin_for_aircraft(
         fuel={},
         _nav_history=[],
     )
-    banner = f"{t('unverified_banner', lang)}\n\n{profile.tail_number} -- rev. {profile.revision_number}"
-    await message.answer(banner)
+    await message.answer(f"{profile.tail_number} (rev. {profile.revision_number})")
 
     if not non_fuel_stations:
         await _ask_next_fuel_starting(message, state, user)
@@ -119,15 +131,21 @@ async def _render_load_prompt(message: Message, state: FSMContext, user: User, i
     data = await state.get_data()
     lang = _lang(user)
     station_ids = data["non_fuel_station_ids"]
-    name = data.get("non_fuel_station_names", {}).get(station_ids[index], station_ids[index])
+    station_id = station_ids[index]
+    name = data.get("non_fuel_station_names", {}).get(station_id, station_id)
+    station_type = data.get("non_fuel_station_types", {}).get(station_id)
+    prompt_key = (
+        "ask_load_at_seat_station"
+        if station_type in {StationType.FRONT_SEATS.value, StationType.REAR_SEATS.value, StationType.PASSENGER.value}
+        else "ask_load_at_station"
+    )
     await message.answer(
-        t("ask_load_at_station", lang, station=name), reply_markup=skip_cancel_keyboard(lang, show_back=show_back)
+        t(prompt_key, lang, station=name), reply_markup=skip_cancel_keyboard(lang, show_back=show_back)
     )
 
 
 _FUEL_FIELD_STATE: dict[str, tuple[State, str]] = {
     "starting": (FlightWizard.fuel_starting, "ask_fuel_starting"),
-    "taxi": (FlightWizard.fuel_taxi, "ask_fuel_taxi"),
     "enroute": (FlightWizard.fuel_enroute, "ask_fuel_enroute"),
     "minimum": (FlightWizard.fuel_minimum, "ask_min_fuel"),
 }
@@ -223,27 +241,12 @@ async def got_fuel_starting(message: Message, state: FSMContext, user: User) -> 
     fuel_ids = data["fuel_station_ids"]
     index = data["fuel_index"]
     fuel = data["fuel"]
-    fuel[fuel_ids[index]] = {"starting_gal": str(gal)}
+    # Taxi fuel burn is not asked -- for private GA aircraft it's negligible for W&B purposes,
+    # so Takeoff is computed identically to Ramp (taxi_burn_gal stays at its domain default of 0).
+    fuel[fuel_ids[index]] = {"starting_gal": str(gal), "taxi_burn_gal": "0"}
     await state.update_data(fuel=fuel)
     await push_checkpoint(state, ("fuel", index, "starting"))
-    await _render_fuel_prompt(message, state, user, index, "taxi")
-
-
-@router.message(FlightWizard.fuel_taxi)
-async def got_fuel_taxi(message: Message, state: FSMContext, user: User) -> None:
-    lang = _lang(user)
-    try:
-        gal = parse_decimal(message.text)
-    except InputParseError as exc:
-        await message.answer(t("error_generic", lang, detail=str(exc)))
-        return
-    await _store_fuel_field_and_advance(message, state, user, "taxi", "taxi_burn_gal", str(gal))
-
-
-@router.callback_query(FlightWizard.fuel_taxi, F.data == "wizard:skip")
-async def skip_fuel_taxi(callback: CallbackQuery, state: FSMContext, user: User) -> None:
-    await callback.answer()
-    await _store_fuel_field_and_advance(callback.message, state, user, "taxi", "taxi_burn_gal", "0")
+    await _render_fuel_prompt(message, state, user, index, "enroute")
 
 
 async def _store_fuel_field_and_advance(
@@ -257,9 +260,7 @@ async def _store_fuel_field_and_advance(
     await state.update_data(fuel=fuel)
     await push_checkpoint(state, ("fuel", index, checkpoint_field))
 
-    if checkpoint_field == "taxi":
-        await _render_fuel_prompt(message, state, user, index, "enroute")
-    elif checkpoint_field == "enroute":
+    if checkpoint_field == "enroute":
         await _render_fuel_prompt(message, state, user, index, "minimum")
     elif checkpoint_field == "minimum":
         await _ask_next_fuel_starting(message, state, user, index + 1)
@@ -312,7 +313,6 @@ async def _show_flight_review(message: Message, state: FSMContext, user: User) -
         name = data.get("fuel_station_names", {}).get(station_id, station_id)
         lines.append(
             f"{name}: start {fuel_data.get('starting_gal', '0')} gal, "
-            f"taxi burn {fuel_data.get('taxi_burn_gal', '0')} gal, "
             f"enroute burn {fuel_data.get('enroute_burn_gal', '0')} gal"
         )
     await state.set_state(FlightWizard.review)
@@ -328,9 +328,12 @@ def _phase_text(phase: PhaseResult, lang: str) -> str:
         lines.append(f"Weight margin: {fmt(margin, ' lb')}")
     lines.append(f"CG: {fmt(phase.cg_in, ' in')}")
     cg = phase.cg_check
-    lines.append(f"Allowed: {fmt(cg.forward_limit_in, ' in')}-{fmt(cg.aft_limit_in, ' in')}")
-    lines.append(f"Forward margin: {fmt(cg.forward_margin_in, ' in')}")
-    lines.append(f"Aft margin: {fmt(cg.aft_margin_in, ' in')}")
+    if cg is not None:
+        lines.append(f"Allowed: {fmt(cg.forward_limit_in, ' in')}-{fmt(cg.aft_limit_in, ' in')}")
+        lines.append(f"Forward margin: {fmt(cg.forward_margin_in, ' in')}")
+        lines.append(f"Aft margin: {fmt(cg.aft_margin_in, ' in')}")
+    else:
+        lines.append("CG limits: NOT EVALUATED -- no CG envelope entered for this aircraft")
     for s in phase.station_results:
         if s.over_station_limit:
             lines.append(f"⚠️ {s.name} exceeds its station weight limit")
@@ -406,26 +409,30 @@ async def flight_review_confirm(
         result=result,
     )
 
-    lines = [t("unverified_banner", lang), ""]
-    if not result.landing_evaluated:
-        overall_key = "status_incomplete"
+    # The overall status always reflects the actual current/takeoff (and landing, if
+    # evaluated) result -- "landing not evaluated" is noted separately below, it must never
+    # replace or hide a real WITHIN/ON_LIMIT/OUT_OF_LIMITS finding with a fake "incomplete".
+    lines = [t(_STATUS_KEY[result.overall_status], lang), ""]
+    lines.append(f"{profile.tail_number} (rev. {profile.revision_number})")
+    lines.append("")
+    if profile.envelope is None:
+        lines.append("⚠️ No CG envelope on file -- weight checked, CG NOT evaluated.")
+        lines.append("")
+    ramp_and_takeoff_identical = result.ramp.total_weight_lb == result.takeoff.total_weight_lb
+    if ramp_and_takeoff_identical:
+        lines.append(_phase_text(result.takeoff, lang))
     else:
-        overall_key = _STATUS_KEY[result.overall_status]
-    lines.append(t(overall_key, lang))
-    lines.append("")
-    lines.append(f"Aircraft: {profile.tail_number}")
-    lines.append(f"Profile revision: {profile.revision_number}")
-    lines.append("")
-    lines.append(_phase_text(result.ramp, lang))
-    lines.append("")
-    lines.append(_phase_text(result.takeoff, lang))
+        lines.append(_phase_text(result.ramp, lang))
+        lines.append("")
+        lines.append(_phase_text(result.takeoff, lang))
     lines.append("")
     if result.landing is not None:
         lines.append(_phase_text(result.landing, lang))
-    else:
+        lines.append("")
+    elif not result.landing_evaluated:
         lines.append(t("landing_not_evaluated", lang))
-    lines.append("")
-    lines.append(t("disclaimer", lang))
+        lines.append("")
+    lines.append(t("result_footer", lang))
 
     await callback.message.answer("\n".join(lines))
 
@@ -443,16 +450,49 @@ async def flight_review_confirm(
     await callback.answer()
 
 
+def _history_summary(calc) -> str:
+    """Pulls a compact weight/status summary out of either engine's result snapshot --
+    the quick-calculate result and the full ramp/takeoff/landing result have different
+    shapes, so both are handled defensively rather than assuming one format."""
+    try:
+        result = json.loads(calc.result_snapshot_json)
+    except (ValueError, TypeError):
+        return "status unavailable"
+
+    status = result.get("overall_status", "?")
+    weight = None
+    if "total_weight_lb" in result:
+        weight = result["total_weight_lb"]
+    elif isinstance(result.get("takeoff"), dict):
+        weight = result["takeoff"].get("total_weight_lb")
+
+    weight_text = f"{Decimal(weight):,.1f} lb" if weight is not None else "? lb"
+    status_text = {
+        "WITHIN": "Within Limits",
+        "ON_LIMIT": "On Limit",
+        "OUT_OF_LIMITS": "OUT",
+    }.get(status, status)
+    return f"{weight_text} -- {status_text}"
+
+
 @router.message(F.text.in_({t("menu_history", "en"), t("menu_history", "ru")}))
-async def calculation_history(message: Message, user: User, flight_service: FlightService) -> None:
+async def calculation_history(
+    message: Message, user: User, flight_service: FlightService, aircraft_service: AircraftService
+) -> None:
     lang = _lang(user)
     history = await flight_service.list_history(user.id, limit=10)
     if not history:
         await message.answer(t("history_empty", lang))
         return
+
+    aircraft_cache: dict[int, str] = {}
     lines = []
     for calc in history:
-        lines.append(f"#{calc.id} -- {calc.created_at:%Y-%m-%d %H:%M} UTC (engine {calc.calculation_engine_version})")
+        if calc.aircraft_id not in aircraft_cache:
+            aircraft = await aircraft_service.get_aircraft(user.id, calc.aircraft_id)
+            aircraft_cache[calc.aircraft_id] = aircraft.tail_number if aircraft else "?"
+        tail = aircraft_cache[calc.aircraft_id]
+        lines.append(f"{calc.created_at:%b %d} -- {tail} -- {_history_summary(calc)}")
     await message.answer("\n".join(lines))
 
 

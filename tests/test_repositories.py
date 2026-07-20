@@ -51,6 +51,40 @@ async def session_factory(tmp_path):
     await engine.dispose()
 
 
+async def test_default_language_is_honored_for_new_users(session_factory):
+    """DbSessionMiddleware passes settings.default_language into get_or_create_user -- this
+    verifies that language argument is actually stored, not silently dropped to 'en'."""
+    factory, _ = session_factory
+    async with factory() as session:
+        service = AircraftService(AircraftRepository(session))
+
+        ru_user = await service.get_or_create_user(telegram_user_id=999, language="ru")
+        await session.commit()
+        assert ru_user.language == "ru"
+
+        # a returning user's language must not be reset by a later call with a different default
+        same_user_again = await service.get_or_create_user(telegram_user_id=999, language="en")
+        assert same_user_again.language == "ru"
+
+
+async def test_new_aircraft_becomes_active_automatically(session_factory):
+    factory, _ = session_factory
+    async with factory() as session:
+        service = AircraftService(AircraftRepository(session))
+        user = await service.get_or_create_user(telegram_user_id=666)
+        assert user.selected_aircraft_id is None
+
+        aircraft = await service.create_aircraft(user.id, "N666FF", "172", None, None, _draft())
+        await session.commit()
+
+        assert user.selected_aircraft_id == aircraft.id
+
+        # a second aircraft becomes the new active one -- no manual "Select Aircraft" needed
+        aircraft2 = await service.create_aircraft(user.id, "N667GG", "182", None, None, _draft())
+        await session.commit()
+        assert user.selected_aircraft_id == aircraft2.id
+
+
 async def test_multi_user_data_isolation(session_factory):
     factory, _ = session_factory
     async with factory() as session:

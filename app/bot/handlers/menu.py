@@ -3,7 +3,13 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from app.bot.keyboards.common import aircraft_list_keyboard, main_menu_keyboard
+from app.bot.keyboards.common import (
+    aircraft_card_keyboard,
+    aircraft_list_keyboard,
+    aircraft_submenu_keyboard,
+    main_menu_keyboard,
+    more_submenu_keyboard,
+)
 from app.bot.texts.i18n import t
 from app.database.models import Aircraft, User
 from app.services.aircraft_service import AircraftService
@@ -16,10 +22,58 @@ def _lang(user: User) -> str:
 
 
 @router.message(Command("start"))
-async def cmd_start(message: Message, user: User) -> None:
+async def cmd_start(message: Message, user: User, aircraft_service: AircraftService) -> None:
     lang = _lang(user)
     await message.answer(t("welcome", lang), parse_mode="Markdown")
+
+    active_aircraft = None
+    if user.selected_aircraft_id:
+        active_aircraft = await aircraft_service.get_aircraft(user.id, user.selected_aircraft_id)
+
+    if active_aircraft is not None:
+        await message.answer(
+            _aircraft_card(active_aircraft), reply_markup=aircraft_card_keyboard(lang)
+        )
     await message.answer(t("main_menu", lang), reply_markup=main_menu_keyboard(lang))
+
+
+@router.message(F.text.in_({t("menu_aircraft_submenu", "en"), t("menu_aircraft_submenu", "ru")}))
+async def aircraft_submenu(message: Message, user: User) -> None:
+    lang = _lang(user)
+    await message.answer(t("menu_aircraft_submenu", lang), reply_markup=aircraft_submenu_keyboard(lang))
+
+
+@router.message(F.text.in_({t("menu_more_submenu", "en"), t("menu_more_submenu", "ru")}))
+async def more_submenu(message: Message, user: User) -> None:
+    lang = _lang(user)
+    await message.answer(t("menu_more_submenu", lang), reply_markup=more_submenu_keyboard(lang))
+
+
+@router.message(F.text.in_({t("menu_back", "en"), t("menu_back", "ru")}))
+async def back_to_main_menu(message: Message, user: User) -> None:
+    lang = _lang(user)
+    await message.answer(t("main_menu", lang), reply_markup=main_menu_keyboard(lang))
+
+
+def _aircraft_card(aircraft: Aircraft) -> str:
+    nickname = f"\n{aircraft.nickname}" if aircraft.nickname else ""
+    return f"{aircraft.tail_number}{nickname}\n{aircraft.model}"
+
+
+@router.callback_query(F.data == "card:calculate")
+async def card_calculate(
+    callback: CallbackQuery, state: FSMContext, user: User, aircraft_service: AircraftService
+) -> None:
+    from app.bot.handlers.flight_calculation import start_calculation
+
+    await callback.answer()
+    await start_calculation(callback.message, state, user, aircraft_service)
+
+
+@router.callback_query(F.data == "card:change_aircraft")
+async def card_change_aircraft(callback: CallbackQuery, user: User, aircraft_service: AircraftService) -> None:
+    await callback.answer()
+    await select_aircraft_prompt(callback.message, user, aircraft_service)
 
 
 @router.message(Command("help"))

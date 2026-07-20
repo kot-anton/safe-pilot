@@ -152,6 +152,38 @@ def test_taxi_burn_greater_than_starting_fuel_rejected():
         calculate(profile, calc_input)
 
 
+def test_no_envelope_reports_cg_not_evaluated_but_still_checks_weight():
+    """An aircraft with no CG envelope on file (explicitly skipped during setup) must still
+    catch weight violations -- it just can't say anything about CG."""
+    profile = make_test_profile(envelope=None)
+    calc_input = basic_input(
+        loads=[
+            LoadItemInput(station_id="front_seats", weight_lb=D("500")),
+            LoadItemInput(station_id="rear_seats", weight_lb=D("500")),
+            LoadItemInput(station_id="baggage_1", weight_lb=D("120")),
+        ],
+        fuel=[
+            FuelStationInput(station_id="main_fuel", starting_gal=D("40")),
+            FuelStationInput(station_id="aux_fuel", starting_gal=D("20")),
+        ],
+    )
+    result = calculate(profile, calc_input)
+
+    assert result.ramp.cg_check is None
+    assert result.takeoff.cg_check is None
+    assert result.ramp.total_weight_lb > profile.max_ramp_weight_lb
+    assert result.overall_status == LimitStatus.OUT_OF_LIMITS
+
+
+def test_no_envelope_within_weight_limits_reports_within():
+    profile = make_test_profile(envelope=None)
+    calc_input = basic_input()
+    result = calculate(profile, calc_input)
+
+    assert result.ramp.cg_check is None
+    assert result.overall_status == LimitStatus.WITHIN
+
+
 def test_adjustable_arm_out_of_range_rejected():
     from app.domain.models import StationProfile, StationType
 

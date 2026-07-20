@@ -67,5 +67,26 @@ class FlightService:
             result_snapshot_json=_snapshot(result),
         )
 
+    async def persist_quick_calculation(
+        self,
+        *,
+        user_id: int,
+        aircraft_id: int,
+        aircraft_revision_id: int,
+        quick_input: dict,
+        result,
+    ):
+        """Same storage as the full calculator (FlightCalculation is engine-agnostic), used
+        by the quick 4-question flow. `quick_input` is a plain dict of front/rear/baggage/fuel
+        values -- kept simple so "Use last" lookups can read it back without engine coupling."""
+        return await self.repo.save_calculation(
+            user_id=user_id,
+            aircraft_id=aircraft_id,
+            aircraft_revision_id=aircraft_revision_id,
+            engine_version=f"{ENGINE_VERSION}-quick",
+            input_snapshot_json=_snapshot(quick_input),
+            result_snapshot_json=_snapshot(result),
+        )
+
     async def list_history(self, user_id: int, aircraft_id: int | None = None, limit: int = 10):
         return await self.repo.list_for_user(user_id, aircraft_id, limit)

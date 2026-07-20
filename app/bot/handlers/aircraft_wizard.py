@@ -224,7 +224,12 @@ async def render_envelope_rows(message: Message, state: FSMContext, user: User) 
     text = (
         "Enter CG envelope rows, one per message, as: weight, forward_limit, aft_limit\n"
         "Example format only (not real data): 2200, 35.0, 47.3\n\n"
-        "Send at least two rows in increasing weight order, then press Done."
+        "If your POH only lists a single CG range (not a table that varies by weight), just "
+        "enter it as two rows using your aircraft's minimum and maximum weight with the same "
+        "forward/aft numbers both times -- that's mathematically the same thing.\n\n"
+        "Send at least two rows in increasing weight order, then press Done. If you genuinely "
+        "don't have this data yet, you can skip it below -- but then this aircraft's "
+        "calculations will only check weight, never CG, until you add it via Update Aircraft."
     )
     if rows:
         text += "\n\nRows so far:\n" + "\n".join(
@@ -298,11 +303,47 @@ async def wizard_back(callback: CallbackQuery, state: FSMContext, user: User) ->
 # ---------------------------------------------------------------------------
 
 
+def _setup_mode_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⚡ Quick Setup (recommended)", callback_data="wizard:quick_setup")],
+            [InlineKeyboardButton(text="🛠 Advanced Setup", callback_data="wizard:advanced_setup")],
+        ]
+    )
+
+
 @router.message(F.text.in_({t("menu_add_aircraft", "en"), t("menu_add_aircraft", "ru")}))
 async def start_wizard(message: Message, state: FSMContext, user: User) -> None:
     await state.clear()
     await state.update_data(stations=[], envelope_rows=[])
+    await message.answer(
+        "Quick Setup asks only what's needed for a valid calculation (empty weight/CG, max "
+        "takeoff weight, seats/baggage/fuel, CG envelope). Advanced Setup also covers ramp/"
+        "landing/ZFW weights, known useful load, ballast, and source documents.",
+        reply_markup=_setup_mode_keyboard(),
+    )
+
+
+@router.callback_query(F.data.in_({"wizard:quick_setup", "wizard:advanced_setup"}))
+async def choose_setup_mode(callback: CallbackQuery, state: FSMContext, user: User) -> None:
+    setup_mode = "quick" if callback.data == "wizard:quick_setup" else "advanced"
+    await state.update_data(setup_mode=setup_mode)
+    await callback.answer()
+    await goto(callback.message, state, user, AircraftWizard.tail_number, render_tail_number, record_history=False)
+
+
+@router.message(F.text.in_({t("menu_rental_aircraft", "en"), t("menu_rental_aircraft", "ru")}))
+async def start_rental_wizard(message: Message, state: FSMContext, user: User) -> None:
+    """Rental aircraft always use Quick Setup -- just flagged as temporary so it can be told
+    apart later (e.g. for a future auto-archive pass) without a separate flow to maintain."""
+    await state.clear()
+    await state.update_data(stations=[], envelope_rows=[], is_temporary=True, setup_mode="quick")
+    await message.answer("Setting up a temporary/rental aircraft profile (Quick Setup).")
     await goto(message, state, user, AircraftWizard.tail_number, render_tail_number, record_history=False)
+
+
+def _is_quick(data: dict) -> bool:
+    return data.get("setup_mode") == "quick"
 
 
 @router.callback_query(F.data == "wizard:cancel")
@@ -325,7 +366,12 @@ async def got_tail_number(message: Message, state: FSMContext, user: User) -> No
         await message.answer(t("error_generic", _lang(user), detail="tail number required"))
         return
     await state.update_data(tail_number=tail_number)
-    await goto(message, state, user, AircraftWizard.nickname, render_nickname)
+    data = await state.get_data()
+    if _is_quick(data):
+        await state.update_data(nickname=None, manufacturer=None)
+        await goto(message, state, user, AircraftWizard.model, render_model)
+    else:
+        await goto(message, state, user, AircraftWizard.nickname, render_nickname)
 
 
 @router.message(AircraftWizard.nickname)
@@ -439,7 +485,17 @@ async def got_empty_moment(message: Message, state: FSMContext, user: User) -> N
 
 @router.callback_query(AircraftWizard.confirm_empty_record, F.data == "wizard:yes")
 async def confirm_empty_record_yes(callback: CallbackQuery, state: FSMContext, user: User) -> None:
-    await goto(callback.message, state, user, AircraftWizard.max_ramp_weight, render_max_ramp_weight)
+    data = await state.get_data()
+    if _is_quick(data):
+        await state.update_data(
+            max_ramp_weight_lb=None,
+            max_landing_weight_lb=None,
+            max_zero_fuel_weight_lb=None,
+            known_useful_load_lb=None,
+        )
+        await goto(callback.message, state, user, AircraftWizard.max_takeoff_weight, render_max_takeoff_weight)
+    else:
+        await goto(callback.message, state, user, AircraftWizard.max_ramp_weight, render_max_ramp_weight)
     await callback.answer()
 
 
@@ -496,13 +552,21 @@ async def got_max_takeoff_weight(message: Message, state: FSMContext, user: User
         await message.answer(t("error_generic", lang, detail=str(exc)))
         return
     await state.update_data(max_takeoff_weight_lb=str(value))
-    await goto(message, state, user, AircraftWizard.max_landing_weight, render_max_landing_weight)
+    await _advance_past_max_takeoff(message, state, user)
 
 
 @router.callback_query(AircraftWizard.max_takeoff_weight, F.data == "wizard:keep")
 async def keep_max_takeoff_weight(callback: CallbackQuery, state: FSMContext, user: User) -> None:
-    await goto(callback.message, state, user, AircraftWizard.max_landing_weight, render_max_landing_weight)
+    await _advance_past_max_takeoff(callback.message, state, user)
     await callback.answer()
+
+
+async def _advance_past_max_takeoff(message: Message, state: FSMContext, user: User) -> None:
+    data = await state.get_data()
+    if _is_quick(data):
+        await goto(message, state, user, AircraftWizard.station_add_prompt, render_station_add_prompt)
+    else:
+        await goto(message, state, user, AircraftWizard.max_landing_weight, render_max_landing_weight)
 
 
 @router.message(AircraftWizard.max_landing_weight)
@@ -659,6 +723,11 @@ async def use_default_station_name(callback: CallbackQuery, state: FSMContext, u
     await callback.answer()
 
 
+# Only ballast/custom stations are ever asked whether their ARM is adjustable -- seats,
+# baggage compartments, and fuel tanks are physically fixed locations in the airframe.
+_ADJUSTABLE_ARM_ELIGIBLE = {StationType.BALLAST.value, StationType.CUSTOM.value}
+
+
 @router.message(AircraftWizard.station_arm)
 async def got_station_arm(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
@@ -668,7 +737,12 @@ async def got_station_arm(message: Message, state: FSMContext, user: User) -> No
         await message.answer(t("error_generic", lang, detail=str(exc)))
         return
     await state.update_data(current_station_arm=str(arm))
-    await goto(message, state, user, AircraftWizard.station_arm_mode, render_station_arm_mode)
+    data = await state.get_data()
+    if data["current_station_type"] in _ADJUSTABLE_ARM_ELIGIBLE:
+        await goto(message, state, user, AircraftWizard.station_arm_mode, render_station_arm_mode)
+    else:
+        await state.update_data(current_station_adjustable=False, current_station_min_arm=None, current_station_max_arm=None)
+        await _after_arm_configured(message, state, user)
 
 
 async def _after_arm_configured(message: Message, state: FSMContext, user: User) -> None:
@@ -847,6 +921,26 @@ async def undo_last_row(callback: CallbackQuery, state: FSMContext, user: User) 
     await render_envelope_rows(callback.message, state, user)
 
 
+@router.callback_query(AircraftWizard.envelope_rows, F.data == "wizard:skip_envelope")
+async def skip_envelope(callback: CallbackQuery, state: FSMContext, user: User) -> None:
+    await state.update_data(envelope_rows=[])
+    await callback.answer()
+    await callback.message.answer(
+        "⚠️ CG envelope skipped. Calculations for this aircraft will check weight limits only "
+        "-- CG will show as NOT EVALUATED until you add an envelope via Update Aircraft."
+    )
+    await _advance_past_envelope(callback.message, state, user)
+
+
+async def _advance_past_envelope(message: Message, state: FSMContext, user: User) -> None:
+    data = await state.get_data()
+    if _is_quick(data):
+        await state.update_data(source_document_name=None, source_document_date=None)
+        await goto(message, state, user, AircraftWizard.review, render_review)
+    else:
+        await goto(message, state, user, AircraftWizard.source_doc_name, render_source_doc_name)
+
+
 @router.callback_query(AircraftWizard.envelope_rows, F.data == "wizard:envelope_done")
 async def envelope_done(callback: CallbackQuery, state: FSMContext, user: User) -> None:
     data = await state.get_data()
@@ -862,7 +956,7 @@ async def envelope_done(callback: CallbackQuery, state: FSMContext, user: User) 
         await callback.answer(str(exc), show_alert=True)
         return
 
-    await goto(callback.message, state, user, AircraftWizard.source_doc_name, render_source_doc_name)
+    await _advance_past_envelope(callback.message, state, user)
     await callback.answer()
 
 
@@ -975,9 +1069,13 @@ def render_summary(data: dict, lang: str) -> str:
     lines.append(f"Stations ({len(data.get('stations', []))}):")
     for s in data.get("stations", []):
         lines.append(f"  - {s['name']} ({s['station_type']}), ARM {s['default_arm_in']} in")
-    lines.append(f"CG envelope rows ({len(data.get('envelope_rows', []))}):")
-    for r in data.get("envelope_rows", []):
-        lines.append(f"  - {r['weight_lb']} lb: {r['forward_cg_limit_in']}-{r['aft_cg_limit_in']} in")
+    envelope_rows = data.get("envelope_rows", [])
+    if envelope_rows:
+        lines.append(f"CG envelope rows ({len(envelope_rows)}):")
+        for r in envelope_rows:
+            lines.append(f"  - {r['weight_lb']} lb: {r['forward_cg_limit_in']}-{r['aft_cg_limit_in']} in")
+    else:
+        lines.append("CG envelope: none entered -- CG will NOT be evaluated for this aircraft.")
     return "\n".join(lines)
 
 
@@ -1006,7 +1104,13 @@ async def review_confirm(
         return
 
     await aircraft_service.create_aircraft(
-        user.id, data["tail_number"], data["model"], data.get("nickname"), data.get("manufacturer"), draft
+        user.id,
+        data["tail_number"],
+        data["model"],
+        data.get("nickname"),
+        data.get("manufacturer"),
+        draft,
+        is_temporary=bool(data.get("is_temporary")),
     )
     await state.clear()
     await callback.message.answer(t("aircraft_saved", lang), reply_markup=main_menu_keyboard(lang))

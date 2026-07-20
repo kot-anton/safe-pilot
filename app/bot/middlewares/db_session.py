@@ -4,6 +4,7 @@ from typing import Any
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject
 
+from app.config import settings
 from app.database.session import async_session_factory
 from app.repositories.aircraft_repository import AircraftRepository
 from app.repositories.flight_repository import FlightRepository
@@ -32,7 +33,9 @@ class DbSessionMiddleware(BaseMiddleware):
 
                 tg_user = data.get("event_from_user")
                 if tg_user is not None:
-                    data["user"] = await aircraft_service.get_or_create_user(tg_user.id)
+                    data["user"] = await aircraft_service.get_or_create_user(
+                        tg_user.id, settings.default_language
+                    )
 
                 result = await handler(event, data)
                 await session.commit()

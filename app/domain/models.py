@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import Enum
 
-from app.domain.envelope import CGEnvelope, LimitStatus
+from app.domain.envelope import CGCheckResult, CGEnvelope, LimitStatus
 from app.domain.exceptions import InvalidInputError, InvalidStationError
 
 
@@ -59,7 +59,7 @@ class AircraftProfile:
     basic_empty_moment_lb_in: Decimal
     max_takeoff_weight_lb: Decimal
     stations: list[StationProfile]
-    envelope: CGEnvelope
+    envelope: CGEnvelope | None
     max_ramp_weight_lb: Decimal | None = None
     max_landing_weight_lb: Decimal | None = None
     max_zero_fuel_weight_lb: Decimal | None = None
@@ -130,7 +130,7 @@ class PhaseResult:
     total_weight_lb: Decimal
     weight_limit_lb: Decimal | None
     cg_in: Decimal
-    cg_check: object  # CGCheckResult
+    cg_check: CGCheckResult | None  # None when the aircraft has no CG envelope configured
     station_results: list[StationLoadResult]
     weight_status: LimitStatus
     overall_status: LimitStatus

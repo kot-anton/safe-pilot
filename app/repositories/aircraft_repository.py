@@ -57,7 +57,13 @@ class AircraftRepository:
         return result.scalar_one_or_none()
 
     async def create_aircraft(
-        self, user_id: int, tail_number: str, model: str, nickname: str | None, manufacturer: str | None
+        self,
+        user_id: int,
+        tail_number: str,
+        model: str,
+        nickname: str | None,
+        manufacturer: str | None,
+        is_temporary: bool = False,
     ) -> Aircraft:
         aircraft = Aircraft(
             user_id=user_id,
@@ -65,6 +71,7 @@ class AircraftRepository:
             model=model,
             nickname=nickname,
             manufacturer=manufacturer,
+            is_temporary=is_temporary,
         )
         self.session.add(aircraft)
         await self.session.flush()
@@ -133,5 +140,11 @@ class AircraftRepository:
         await self.session.flush()
 
     async def set_selected_aircraft(self, user: User, aircraft_id: int | None) -> None:
+        user.selected_aircraft_id = aircraft_id
+        await self.session.flush()
+
+    async def set_selected_aircraft_id(self, user_id: int, aircraft_id: int | None) -> None:
+        result = await self.session.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one()
         user.selected_aircraft_id = aircraft_id
         await self.session.flush()

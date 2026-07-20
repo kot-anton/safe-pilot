@@ -5,7 +5,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from app.bot.handlers import aircraft_update, aircraft_wizard, flight_calculation, menu
+from app.bot.handlers import aircraft_update, aircraft_wizard, flight_calculation, menu, quick_calculate
 from app.bot.middlewares.db_session import DbSessionMiddleware
 from app.config import settings
 
@@ -25,6 +25,7 @@ async def main() -> None:
     dispatcher.callback_query.middleware(db_middleware)
 
     dispatcher.include_router(menu.router)
+    dispatcher.include_router(quick_calculate.router)
     dispatcher.include_router(aircraft_wizard.router)
     dispatcher.include_router(aircraft_update.router)
     dispatcher.include_router(flight_calculation.router)

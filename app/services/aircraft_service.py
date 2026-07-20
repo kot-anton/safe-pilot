@@ -102,9 +102,15 @@ class AircraftService:
         nickname: str | None,
         manufacturer: str | None,
         draft: AircraftRevisionDraft,
+        is_temporary: bool = False,
     ) -> Aircraft:
-        aircraft = await self.repo.create_aircraft(user_id, tail_number, model, nickname, manufacturer)
+        aircraft = await self.repo.create_aircraft(
+            user_id, tail_number, model, nickname, manufacturer, is_temporary
+        )
         await self._add_revision(aircraft, draft)
+        # A newly created aircraft becomes the active one automatically -- no separate
+        # "Select Aircraft" step required before the pilot can calculate with it.
+        await self.repo.set_selected_aircraft_id(user_id, aircraft.id)
         return aircraft
 
     async def update_aircraft(self, aircraft: Aircraft, draft: AircraftRevisionDraft) -> AircraftRevision:
@@ -179,15 +185,22 @@ def build_domain_profile(revision: AircraftRevision, aircraft: Aircraft) -> Airc
         for s in revision.stations
         if s.active
     ]
-    envelope = CGEnvelope(
-        [
-            EnvelopeRow(
-                weight_lb=r.weight_lb,
-                forward_cg_limit_in=r.forward_cg_limit_in,
-                aft_cg_limit_in=r.aft_cg_limit_in,
-            )
-            for r in sorted(revision.envelope_rows, key=lambda r: r.weight_lb)
-        ]
+    sorted_envelope_rows = sorted(revision.envelope_rows, key=lambda r: r.weight_lb)
+    # An aircraft may have no CG envelope on file (explicitly skipped during setup) --
+    # CG is then simply not evaluated rather than assumed safe.
+    envelope = (
+        CGEnvelope(
+            [
+                EnvelopeRow(
+                    weight_lb=r.weight_lb,
+                    forward_cg_limit_in=r.forward_cg_limit_in,
+                    aft_cg_limit_in=r.aft_cg_limit_in,
+                )
+                for r in sorted_envelope_rows
+            ]
+        )
+        if len(sorted_envelope_rows) >= 2
+        else None
     )
     return AircraftProfile(
         tail_number=aircraft.tail_number,

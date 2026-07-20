@@ -38,6 +38,12 @@ class StationTypeEnum(str, enum.Enum):
     CUSTOM = "CUSTOM"
 
 
+class FuelInputModeEnum(str, enum.Enum):
+    SINGLE_ARM = "SINGLE_ARM"
+    UNKNOWN_SPLIT_RANGE = "UNKNOWN_SPLIT_RANGE"
+    FIXED_ALLOCATION = "FIXED_ALLOCATION"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -67,6 +73,7 @@ class Aircraft(Base):
         ForeignKey("aircraft_revisions.id", use_alter=True, name="fk_active_revision"), nullable=True
     )
     allow_added_ballast_recommendations: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_temporary: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     archived_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -114,6 +121,55 @@ class AircraftRevision(Base):
     envelope_rows: Mapped[list["CGEnvelopeRow"]] = relationship(
         back_populates="aircraft_revision", cascade="all, delete-orphan", order_by="CGEnvelopeRow.weight_lb"
     )
+    fuel_systems: Mapped[list["FuelSystem"]] = relationship(
+        back_populates="aircraft_revision", cascade="all, delete-orphan", order_by="FuelSystem.display_order"
+    )
+
+
+class FuelSystem(Base):
+    """Groups one or more fuel-tank stations that share one 'total usable fuel' input.
+
+    Additive to the existing Station model -- a FuelSystem doesn't replace Station rows, it
+    just says how a group of FUEL-type stations should be treated when the pilot enters one
+    total gallons number instead of per-tank amounts (see app.domain.fuel_allocation).
+    """
+
+    __tablename__ = "fuel_systems"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    aircraft_revision_id: Mapped[int] = mapped_column(
+        ForeignKey("aircraft_revisions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(64), nullable=False, default="Fuel")
+    input_mode: Mapped[FuelInputModeEnum] = mapped_column(SAEnum(FuelInputModeEnum), nullable=False)
+    usable_capacity_gal: Mapped[Decimal] = mapped_column(NUM, nullable=False)
+    total_physical_capacity_gal: Mapped[Decimal | None] = mapped_column(NUM, nullable=True)
+    fuel_density_lb_per_gal: Mapped[Decimal] = mapped_column(NUM, nullable=False)
+    display_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    aircraft_revision: Mapped["AircraftRevision"] = relationship(back_populates="fuel_systems")
+    tanks: Mapped[list["FuelSystemTank"]] = relationship(
+        back_populates="fuel_system", cascade="all, delete-orphan", order_by="FuelSystemTank.allocation_order"
+    )
+
+
+class FuelSystemTank(Base):
+    __tablename__ = "fuel_system_tanks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    fuel_system_id: Mapped[int] = mapped_column(
+        ForeignKey("fuel_systems.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    station_id: Mapped[int] = mapped_column(
+        ForeignKey("stations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    usable_capacity_gal: Mapped[Decimal] = mapped_column(NUM, nullable=False)
+    # Only meaningful for FIXED_ALLOCATION -- a confirmed, explicit fill order/quantity.
+    allocation_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    fixed_full_quantity_gal: Mapped[Decimal | None] = mapped_column(NUM, nullable=True)
+
+    fuel_system: Mapped["FuelSystem"] = relationship(back_populates="tanks")
+    station: Mapped["Station"] = relationship()
 
 
 class Station(Base):

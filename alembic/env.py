@@ -9,7 +9,10 @@ from app.config import settings
 from app.database.models import Base
 
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# Respect a URL explicitly configured on this Config object (e.g. by a test harness invoking
+# alembic programmatically) -- only fall back to the app's own settings when nothing was set.
+if not config.get_main_option("sqlalchemy.url"):
+    config.set_main_option("sqlalchemy.url", settings.database_url)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
