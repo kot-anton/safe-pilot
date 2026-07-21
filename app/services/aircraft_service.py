@@ -16,6 +16,7 @@ from app.domain.models import AircraftProfile, StationProfile, StationType
 from app.repositories.aircraft_repository import AircraftRepository
 
 USEFUL_LOAD_TOLERANCE_LB = Decimal("5.0")
+EMPTY_CG_CONSISTENCY_TOLERANCE_IN = Decimal("0.01")
 
 
 @dataclass(frozen=True)
@@ -55,14 +56,124 @@ class AircraftRevisionDraft:
     notes: str | None = None
 
 
+def _require_finite(value: Decimal, label: str) -> None:
+    if not value.is_finite():
+        raise InconsistentAircraftDataError(f"{label} must be finite")
+
+
 def empty_moment_from_cg(weight_lb: Decimal, cg_in: Decimal) -> Decimal:
+    _require_finite(weight_lb, "Basic Empty Weight")
+    _require_finite(cg_in, "Basic Empty CG")
+    if weight_lb <= 0:
+        raise InconsistentAircraftDataError("Basic Empty Weight must be greater than zero")
     return weight_lb * cg_in
 
 
 def empty_cg_from_moment(weight_lb: Decimal, moment_lb_in: Decimal) -> Decimal:
-    if weight_lb == 0:
-        raise InconsistentAircraftDataError("Basic empty weight must be greater than zero")
+    _require_finite(weight_lb, "Basic Empty Weight")
+    _require_finite(moment_lb_in, "Basic Empty Moment")
+    if weight_lb <= 0:
+        raise InconsistentAircraftDataError("Basic Empty Weight must be greater than zero")
     return moment_lb_in / weight_lb
+
+
+def validate_aircraft_identity(
+    tail_number: str, model: str, nickname: str | None, manufacturer: str | None
+) -> None:
+    tail = tail_number.strip()
+    model_name = model.strip()
+    if not tail:
+        raise InconsistentAircraftDataError("Aircraft tail number or identifier is required")
+    if len(tail) > 16:
+        raise InconsistentAircraftDataError("Aircraft identifier must be 16 characters or fewer")
+    if not model_name:
+        raise InconsistentAircraftDataError("Aircraft model is required")
+    if len(model_name) > 64:
+        raise InconsistentAircraftDataError("Aircraft model must be 64 characters or fewer")
+    if nickname is not None and len(nickname.strip()) > 64:
+        raise InconsistentAircraftDataError("Aircraft nickname must be 64 characters or fewer")
+    if manufacturer is not None and len(manufacturer.strip()) > 64:
+        raise InconsistentAircraftDataError("Manufacturer must be 64 characters or fewer")
+
+
+def validate_revision_draft(draft: "AircraftRevisionDraft") -> None:
+    """Validate a complete revision before any database write occurs.
+
+    This prevents invalid/partial revisions and, during aircraft creation, prevents an orphan
+    aircraft row if the station or envelope data is malformed.
+    """
+    for label, value in (
+        ("Basic Empty Weight", draft.basic_empty_weight_lb),
+        ("Basic Empty Moment", draft.basic_empty_moment_lb_in),
+        ("Basic Empty CG", draft.basic_empty_cg_in),
+        ("Maximum Takeoff Weight", draft.max_takeoff_weight_lb),
+    ):
+        _require_finite(value, label)
+
+    calculated_cg = empty_cg_from_moment(
+        draft.basic_empty_weight_lb, draft.basic_empty_moment_lb_in
+    )
+    if abs(calculated_cg - draft.basic_empty_cg_in) > EMPTY_CG_CONSISTENCY_TOLERANCE_IN:
+        raise InconsistentAircraftDataError(
+            "Basic Empty Weight, Moment, and CG are inconsistent: "
+            f"Moment / Weight gives {calculated_cg:.4f} in, but CG is "
+            f"{draft.basic_empty_cg_in:.4f} in"
+        )
+
+    if draft.known_useful_load_lb is not None:
+        _require_finite(draft.known_useful_load_lb, "Known Useful Load")
+        if draft.known_useful_load_lb < 0:
+            raise InconsistentAircraftDataError("Known Useful Load cannot be negative")
+
+    if draft.source_document_name is not None and len(draft.source_document_name.strip()) > 128:
+        raise InconsistentAircraftDataError("Source document name must be 128 characters or fewer")
+
+    station_profiles = [
+        StationProfile(
+            station_id=f"draft-{index}",
+            name=station.name.strip(),
+            station_type=station.station_type,
+            default_arm_in=station.default_arm_in,
+            is_adjustable_arm=station.is_adjustable_arm,
+            minimum_arm_in=station.minimum_arm_in,
+            maximum_arm_in=station.maximum_arm_in,
+            maximum_weight_lb=station.maximum_weight_lb,
+            maximum_volume_gal=station.maximum_volume_gal,
+            fuel_density_lb_per_gal=station.fuel_density_lb_per_gal,
+        )
+        for index, station in enumerate(draft.stations)
+    ]
+    for station in draft.stations:
+        if len(station.name.strip()) > 64:
+            raise InconsistentAircraftDataError(
+                f"Station name '{station.name}' must be 64 characters or fewer"
+            )
+
+    if draft.envelope_rows:
+        envelope = CGEnvelope(
+            [
+                EnvelopeRow(
+                    row.weight_lb, row.forward_cg_limit_in, row.aft_cg_limit_in
+                )
+                for row in draft.envelope_rows
+            ]
+        )
+    else:
+        envelope = None
+
+    # AircraftProfile performs the remaining cross-field limit validation.
+    AircraftProfile(
+        tail_number="DRAFT",
+        revision_number=1,
+        basic_empty_weight_lb=draft.basic_empty_weight_lb,
+        basic_empty_moment_lb_in=draft.basic_empty_moment_lb_in,
+        max_takeoff_weight_lb=draft.max_takeoff_weight_lb,
+        stations=station_profiles,
+        envelope=envelope,
+        max_ramp_weight_lb=draft.max_ramp_weight_lb,
+        max_landing_weight_lb=draft.max_landing_weight_lb,
+        max_zero_fuel_weight_lb=draft.max_zero_fuel_weight_lb,
+    )
 
 
 def useful_load_warning(draft: AircraftRevisionDraft) -> str | None:
@@ -104,6 +215,8 @@ class AircraftService:
         draft: AircraftRevisionDraft,
         is_temporary: bool = False,
     ) -> Aircraft:
+        validate_aircraft_identity(tail_number, model, nickname, manufacturer)
+        validate_revision_draft(draft)
         aircraft = await self.repo.create_aircraft(
             user_id, tail_number, model, nickname, manufacturer, is_temporary
         )
@@ -114,6 +227,7 @@ class AircraftService:
         return aircraft
 
     async def update_aircraft(self, aircraft: Aircraft, draft: AircraftRevisionDraft) -> AircraftRevision:
+        validate_revision_draft(draft)
         return await self._add_revision(aircraft, draft)
 
     async def _add_revision(self, aircraft: Aircraft, draft: AircraftRevisionDraft) -> AircraftRevision:
@@ -166,6 +280,23 @@ class AircraftService:
     async def get_revision_for_user(self, user_id: int, revision_id: int) -> AircraftRevision | None:
         return await self.repo.get_revision(user_id, revision_id)
 
+
+
+def suspicious_non_fuel_stations(profile: AircraftProfile) -> list[StationProfile]:
+    """Return stations that look like fuel tanks but are not configured as FUEL.
+
+    This is intentionally a warning-only heuristic: it never mutates or reclassifies aviation
+    data. It catches the historical failure mode where a station named "Fuel Aux Tanks" was
+    stored as CUSTOM and then requested in pounds.
+    """
+    suspicious: list[StationProfile] = []
+    for station in profile.stations:
+        if station.station_type == StationType.FUEL:
+            continue
+        words = {word.strip("-_/()[]") for word in station.name.casefold().split()}
+        if "fuel" in words or "tank" in words or "tanks" in words:
+            suspicious.append(station)
+    return suspicious
 
 def build_domain_profile(revision: AircraftRevision, aircraft: Aircraft) -> AircraftProfile:
     """Converts a persisted AircraftRevision into the pure domain AircraftProfile."""

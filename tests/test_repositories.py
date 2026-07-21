@@ -4,7 +4,7 @@ from decimal import Decimal as D
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.database.models import Base, StationTypeEnum
+from app.database.models import Base
 from app.repositories.aircraft_repository import AircraftRepository
 from app.repositories.flight_repository import FlightRepository
 from app.services.aircraft_service import AircraftRevisionDraft, EnvelopeRowDraft, StationDraft

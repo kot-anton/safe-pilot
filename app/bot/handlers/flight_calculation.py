@@ -11,6 +11,7 @@ re-renders whichever checkpoint comes off the stack.
 from __future__ import annotations
 
 import json
+import re
 from decimal import Decimal
 
 from aiogram import F, Router
@@ -35,7 +36,7 @@ from app.domain.envelope import LimitStatus
 from app.domain.exceptions import DomainError
 from app.domain.models import CalculationInput, CalculationResult, FuelStationInput, LoadItemInput, PhaseResult, StationType
 from app.domain.recommendations import Recommendation
-from app.services.aircraft_service import AircraftService
+from app.services.aircraft_service import AircraftService, suspicious_non_fuel_stations
 from app.services.flight_service import FlightService
 
 router = Router(name="flight_calculation")
@@ -60,8 +61,8 @@ async def _load_profile_and_aircraft(user_id: int, aircraft_id: int, aircraft_se
 async def start_calculation(
     message: Message, state: FSMContext, user: User, aircraft_service: AircraftService
 ) -> None:
-    """The full per-tank/per-station "Advanced" calculation -- taxi/enroute burn, minimum
-    fuel, exact per-tank amounts, ramp/takeoff/landing. Reached via the "Advanced / Landing"
+    """The full per-tank/per-station "Advanced" calculation -- optional enroute burn,
+    exact per-tank amounts, ramp/takeoff/landing. Reached via the "Advanced / Landing"
     button on a quick-calculation result (see app.bot.handlers.quick_calculate), not from the
     main menu directly -- the standard flow for routine use is the 4-question quick calculate."""
     lang = _lang(user)
@@ -100,9 +101,25 @@ async def _begin_for_aircraft(
     message: Message, state: FSMContext, user: User, aircraft_service: AircraftService, aircraft_id: int
 ) -> None:
     lang = _lang(user)
-    aircraft, profile = await _load_profile_and_aircraft(user.id, aircraft_id, aircraft_service)
+    try:
+        aircraft, profile = await _load_profile_and_aircraft(
+            user.id, aircraft_id, aircraft_service
+        )
+    except DomainError as exc:
+        await message.answer(f"Aircraft profile is invalid: {exc}")
+        return
     if aircraft is None or profile is None:
         await message.answer(t("no_aircraft_selected", lang))
+        return
+
+    suspicious = suspicious_non_fuel_stations(profile)
+    if suspicious:
+        names = ", ".join(station.name for station in suspicious)
+        await message.answer(
+            "Aircraft profile error: these stations look like fuel tanks but are not configured "
+            f"as FUEL: {names}. Edit the aircraft profile before calculating; fuel must be "
+            "entered in gallons, not pounds."
+        )
         return
 
     non_fuel_stations = [s for s in profile.stations if s.station_type != StationType.FUEL]
@@ -115,11 +132,22 @@ async def _begin_for_aircraft(
         non_fuel_station_ids=[s.station_id for s in non_fuel_stations],
         non_fuel_station_names={s.station_id: s.name for s in non_fuel_stations},
         non_fuel_station_types={s.station_id: s.station_type.value for s in non_fuel_stations},
+        non_fuel_station_adjustable={s.station_id: s.is_adjustable_arm for s in non_fuel_stations},
+        non_fuel_station_default_arms={s.station_id: str(s.default_arm_in) for s in non_fuel_stations},
+        non_fuel_station_min_arms={
+            s.station_id: str(s.minimum_arm_in) if s.minimum_arm_in is not None else None
+            for s in non_fuel_stations
+        },
+        non_fuel_station_max_arms={
+            s.station_id: str(s.maximum_arm_in) if s.maximum_arm_in is not None else None
+            for s in non_fuel_stations
+        },
         fuel_station_ids=[s.station_id for s in fuel_stations],
         fuel_station_names={s.station_id: s.name for s in fuel_stations},
         load_index=0,
         fuel_index=0,
         loads={},
+        load_arms={},
         fuel={},
         _nav_history=[],
     )
@@ -140,8 +168,20 @@ async def _render_load_prompt(message: Message, state: FSMContext, user: User, i
     station_ids = data["non_fuel_station_ids"]
     station_id = station_ids[index]
     name = data.get("non_fuel_station_names", {}).get(station_id, station_id)
+    if data.get("non_fuel_station_adjustable", {}).get(station_id, False):
+        minimum = data.get("non_fuel_station_min_arms", {}).get(station_id)
+        maximum = data.get("non_fuel_station_max_arms", {}).get(station_id)
+        prompt = t(
+            "ask_load_at_adjustable_station",
+            lang,
+            station=name,
+            minimum=minimum,
+            maximum=maximum,
+        )
+    else:
+        prompt = t("ask_load_at_station", lang, station=name)
     await message.answer(
-        t("ask_load_at_station", lang, station=name), reply_markup=zero_cancel_keyboard(lang, show_back=show_back)
+        prompt, reply_markup=zero_cancel_keyboard(lang, show_back=show_back)
     )
 
 
@@ -159,7 +199,8 @@ async def _render_fuel_prompt(message: Message, state: FSMContext, user: User, i
     lang = _lang(user)
     fuel_ids = data["fuel_station_ids"]
     name = data.get("fuel_station_names", {}).get(fuel_ids[index], fuel_ids[index])
-    await message.answer(t(text_key, lang, station=name), reply_markup=skip_cancel_keyboard(lang))
+    keyboard = zero_cancel_keyboard(lang) if field == "starting" else skip_cancel_keyboard(lang)
+    await message.answer(t(text_key, lang, station=name), reply_markup=keyboard)
 
 
 async def _cannot_go_back(callback: CallbackQuery) -> None:
@@ -183,19 +224,64 @@ async def flight_back(callback: CallbackQuery, state: FSMContext, user: User) ->
 @router.message(FlightWizard.load_at_station)
 async def got_load_at_station(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
-    try:
-        weight = parse_decimal(message.text)
-    except InputParseError as exc:
-        await message.answer(t("error_generic", lang, detail=str(exc)))
-        return
     data = await state.get_data()
     station_ids = data["non_fuel_station_ids"]
     index = data["load_index"]
+    station_id = station_ids[index]
+    adjustable = data.get("non_fuel_station_adjustable", {}).get(station_id, False)
+    try:
+        weight, arm = _parse_load_entry(
+            message.text,
+            adjustable=adjustable,
+            default_arm=Decimal(data["non_fuel_station_default_arms"][station_id]),
+        )
+    except InputParseError as exc:
+        await message.answer(t("error_generic", lang, detail=str(exc)))
+        return
     loads = data["loads"]
-    loads[station_ids[index]] = str(weight)
-    await state.update_data(loads=loads)
+    load_arms = data.get("load_arms", {})
+    loads[station_id] = str(weight)
+    if arm is not None:
+        minimum = Decimal(data["non_fuel_station_min_arms"][station_id])
+        maximum = Decimal(data["non_fuel_station_max_arms"][station_id])
+        if not minimum <= arm <= maximum:
+            await message.answer(
+                t(
+                    "error_generic",
+                    lang,
+                    detail=f"ARM must be within {minimum}-{maximum} in",
+                )
+            )
+            return
+        load_arms[station_id] = str(arm)
+    await state.update_data(loads=loads, load_arms=load_arms)
     await push_checkpoint(state, ("load", index))
     await _ask_next_load_or_fuel(message, state, user, index + 1)
+
+
+def _parse_load_entry(
+    text: str, *, adjustable: bool, default_arm: Decimal
+) -> tuple[Decimal, Decimal | None]:
+    """Parse a fixed load or ``weight / ARM`` for an adjustable station.
+
+    A typed zero is accepted without an ARM and uses the profile's default ARM; zero moment is
+    unaffected, while keeping an ARM value satisfies the domain model consistently.
+    """
+    if not adjustable:
+        return parse_decimal(text), None
+
+    stripped = text.strip()
+    separators = re.split(r"\s*(?:/|;)\s*", stripped)
+    if len(separators) == 1:
+        separators = stripped.split()
+    if len(separators) == 1:
+        weight = parse_decimal(separators[0])
+        if weight == 0:
+            return weight, default_arm
+        raise InputParseError("enter both weight and actual ARM, for example: 25 / 90")
+    if len(separators) != 2:
+        raise InputParseError("expected: weight / ARM")
+    return parse_decimal(separators[0]), parse_decimal(separators[1], allow_negative=True)
 
 
 async def _ask_next_load_or_fuel(message: Message, state: FSMContext, user: User, index: int) -> None:
@@ -213,8 +299,12 @@ async def skip_load_at_station(callback: CallbackQuery, state: FSMContext, user:
     station_ids = data["non_fuel_station_ids"]
     index = data["load_index"]
     loads = data["loads"]
-    loads[station_ids[index]] = "0"
-    await state.update_data(loads=loads)
+    load_arms = data.get("load_arms", {})
+    station_id = station_ids[index]
+    loads[station_id] = "0"
+    if data.get("non_fuel_station_adjustable", {}).get(station_id, False):
+        load_arms[station_id] = data["non_fuel_station_default_arms"][station_id]
+    await state.update_data(loads=loads, load_arms=load_arms)
     await push_checkpoint(state, ("load", index))
     await callback.answer()
     await _ask_next_load_or_fuel(callback.message, state, user, index + 1)
@@ -241,22 +331,47 @@ async def got_fuel_starting(message: Message, state: FSMContext, user: User) -> 
     fuel_ids = data["fuel_station_ids"]
     index = data["fuel_index"]
     fuel = data["fuel"]
-    # Taxi fuel burn is not asked -- for private GA aircraft it's negligible for W&B purposes,
-    # so Takeoff is computed identically to Ramp (taxi_burn_gal stays at its domain default of 0).
+    # The UI asks for fuel at takeoff, not ramp fuel. Therefore no taxi subtraction is applied
+    # and the duplicate ramp/takeoff presentation is collapsed later. The domain field remains
+    # available for future integrations that provide an actual ramp quantity and taxi burn.
     fuel[fuel_ids[index]] = {"starting_gal": str(gal), "taxi_burn_gal": "0"}
     await state.update_data(fuel=fuel)
     await push_checkpoint(state, ("fuel", index, "starting"))
     await _render_fuel_prompt(message, state, user, index, "enroute")
 
 
+@router.callback_query(FlightWizard.fuel_starting, F.data == "wizard:skip")
+async def zero_fuel_starting(callback: CallbackQuery, state: FSMContext, user: User) -> None:
+    data = await state.get_data()
+    fuel_ids = data["fuel_station_ids"]
+    index = data["fuel_index"]
+    fuel = data["fuel"]
+    fuel[fuel_ids[index]] = {
+        "starting_gal": "0",
+        "taxi_burn_gal": "0",
+    }
+    await state.update_data(fuel=fuel)
+    await push_checkpoint(state, ("fuel", index, "starting"))
+    await callback.answer()
+    await _render_fuel_prompt(callback.message, state, user, index, "enroute")
+
+
 async def _store_fuel_field_and_advance(
-    message: Message, state: FSMContext, user: User, checkpoint_field: str, data_field: str, value: str
+    message: Message,
+    state: FSMContext,
+    user: User,
+    checkpoint_field: str,
+    data_field: str,
+    value: str,
+    *,
+    landing_fuel_provided: bool,
 ) -> None:
     data = await state.get_data()
     fuel_ids = data["fuel_station_ids"]
     index = data["fuel_index"]
     fuel = data["fuel"]
     fuel[fuel_ids[index]][data_field] = value
+    fuel[fuel_ids[index]]["landing_fuel_provided"] = landing_fuel_provided
     await state.update_data(fuel=fuel)
     await push_checkpoint(state, ("fuel", index, checkpoint_field))
 
@@ -272,13 +387,29 @@ async def got_fuel_enroute(message: Message, state: FSMContext, user: User) -> N
     except InputParseError as exc:
         await message.answer(t("error_generic", lang, detail=str(exc)))
         return
-    await _store_fuel_field_and_advance(message, state, user, "enroute", "enroute_burn_gal", str(gal))
+    await _store_fuel_field_and_advance(
+        message,
+        state,
+        user,
+        "enroute",
+        "enroute_burn_gal",
+        str(gal),
+        landing_fuel_provided=True,
+    )
 
 
 @router.callback_query(FlightWizard.fuel_enroute, F.data == "wizard:skip")
 async def skip_fuel_enroute(callback: CallbackQuery, state: FSMContext, user: User) -> None:
     await callback.answer()
-    await _store_fuel_field_and_advance(callback.message, state, user, "enroute", "enroute_burn_gal", "0")
+    await _store_fuel_field_and_advance(
+        callback.message,
+        state,
+        user,
+        "enroute",
+        "enroute_burn_gal",
+        "0",
+        landing_fuel_provided=False,
+    )
 
 
 async def _show_flight_review(message: Message, state: FSMContext, user: User) -> None:
@@ -287,7 +418,9 @@ async def _show_flight_review(message: Message, state: FSMContext, user: User) -
     lines = [t("review_flight_inputs", lang), ""]
     for station_id, weight in data["loads"].items():
         name = data.get("non_fuel_station_names", {}).get(station_id, station_id)
-        lines.append(f"{name}: {weight} lb")
+        arm = data.get("load_arms", {}).get(station_id)
+        arm_text = f" @ {arm} in" if arm is not None else ""
+        lines.append(f"{name}: {weight} lb{arm_text}")
     for station_id, fuel_data in data["fuel"].items():
         name = data.get("fuel_station_names", {}).get(station_id, station_id)
         lines.append(
@@ -307,7 +440,9 @@ def _phase_text(phase: PhaseResult, lang: str) -> str:
         lines.append(f"Weight margin: {fmt(margin, ' lb')}")
     lines.append(f"CG: {fmt(phase.cg_in, ' in')}")
     cg = phase.cg_check
-    if cg is not None:
+    if cg is not None and not cg.weight_within_envelope:
+        lines.append("CG envelope: NOT DEFINED AT THIS AIRCRAFT WEIGHT")
+    elif cg is not None:
         lines.append(f"Allowed: {fmt(cg.forward_limit_in, ' in')}-{fmt(cg.aft_limit_in, ' in')}")
         lines.append(f"Forward margin: {fmt(cg.forward_margin_in, ' in')}")
         lines.append(f"Aft margin: {fmt(cg.aft_margin_in, ' in')}")
@@ -329,15 +464,29 @@ def _phase_violation_detail(phase: PhaseResult) -> list[str]:
         details.append("overweight")
     elif phase.weight_status == LimitStatus.ON_LIMIT:
         details.append("at max weight")
+    if any(result.over_station_limit for result in phase.station_results):
+        details.append("station load limit")
+    if any(result.over_capacity for result in phase.station_results):
+        details.append("fuel capacity")
     cg = phase.cg_check
-    if cg is not None and cg.status != LimitStatus.WITHIN:
+    if cg is not None and not cg.weight_within_envelope:
+        details.append("weight outside CG envelope range")
+    elif cg is not None and cg.status != LimitStatus.WITHIN:
         direction = "forward CG" if cg.forward_margin_in < 0 else "aft CG" if cg.aft_margin_in < 0 else "CG on limit"
         details.append(direction)
     return details
 
 
-def _status_header(result: CalculationResult, lang: str) -> str:
+def _status_header(
+    result: CalculationResult, lang: str, *, cg_evaluated: bool = True
+) -> str:
     header = t(_STATUS_KEY[result.overall_status], lang)
+    if not cg_evaluated:
+        if result.overall_status == LimitStatus.WITHIN:
+            return "⚠️ CG LIMITS NOT EVALUATED — ENTERED WEIGHT LIMITS WITHIN"
+        if result.overall_status == LimitStatus.ON_LIMIT:
+            return "⚠️ CG LIMITS NOT EVALUATED — ENTERED WEIGHT LIMIT ON BOUNDARY"
+        header += " — CG LIMITS NOT EVALUATED"
     if result.overall_status == LimitStatus.WITHIN:
         return header
     phases = [("TAKEOFF", result.takeoff)]
@@ -348,6 +497,10 @@ def _status_header(result: CalculationResult, lang: str) -> str:
     problems = [f"{name} ({', '.join(_phase_violation_detail(phase))})" for name, phase in phases if _phase_violation_detail(phase)]
     if problems:
         header += " -- " + "; ".join(problems)
+    if result.zero_fuel_status == LimitStatus.OUT_OF_LIMITS:
+        header += " -- ZERO-FUEL WEIGHT EXCEEDED"
+    elif result.zero_fuel_status == LimitStatus.ON_LIMIT:
+        header += " -- ZERO-FUEL WEIGHT ON LIMIT"
     return header
 
 
@@ -379,19 +532,38 @@ async def flight_review_confirm(
 ) -> None:
     lang = _lang(user)
     data = await state.get_data()
-    aircraft, profile = await _load_profile_and_aircraft(user.id, data["aircraft_id"], aircraft_service)
+    try:
+        aircraft, profile = await _load_profile_and_aircraft(
+            user.id, data["aircraft_id"], aircraft_service
+        )
+    except DomainError as exc:
+        await callback.message.answer(f"Aircraft profile is invalid: {exc}")
+        await callback.answer()
+        return
     if aircraft is None or profile is None:
         await callback.answer(t("no_aircraft_selected", lang), show_alert=True)
         await state.clear()
         return
 
-    loads = [LoadItemInput(station_id=sid, weight_lb=Decimal(w)) for sid, w in data["loads"].items()]
+    loads = [
+        LoadItemInput(
+            station_id=sid,
+            weight_lb=Decimal(weight),
+            arm_in=(
+                Decimal(data.get("load_arms", {})[sid])
+                if sid in data.get("load_arms", {})
+                else None
+            ),
+        )
+        for sid, weight in data["loads"].items()
+    ]
     fuel = [
         FuelStationInput(
             station_id=sid,
             starting_gal=Decimal(fdata.get("starting_gal", "0")),
             taxi_burn_gal=Decimal(fdata.get("taxi_burn_gal", "0")),
             enroute_burn_gal=Decimal(fdata.get("enroute_burn_gal", "0")),
+            landing_fuel_provided=bool(fdata.get("landing_fuel_provided", False)),
         )
         for sid, fdata in data["fuel"].items()
     ]
@@ -416,11 +588,23 @@ async def flight_review_confirm(
     # The overall status always reflects the actual current/takeoff (and landing, if
     # evaluated) result -- "landing not evaluated" is noted separately below, it must never
     # replace or hide a real WITHIN/ON_LIMIT/OUT_OF_LIMITS finding with a fake "incomplete".
-    lines = [_status_header(result, lang), ""]
+    lines = [
+        _status_header(result, lang, cg_evaluated=profile.envelope is not None),
+        "",
+    ]
     lines.append(f"{profile.tail_number} (rev. {profile.revision_number})")
     lines.append("")
     if profile.envelope is None:
         lines.append("⚠️ No CG envelope on file -- weight checked, CG NOT evaluated.")
+        lines.append("")
+    if result.zero_fuel_limit_lb is not None:
+        zfw_margin = result.zero_fuel_limit_lb - result.zero_fuel_weight_lb
+        zfw_word = "margin" if zfw_margin >= 0 else "over limit"
+        lines.append(
+            f"ZERO-FUEL WEIGHT: {fmt(result.zero_fuel_weight_lb, ' lb')} / "
+            f"{fmt(result.zero_fuel_limit_lb, ' lb')} "
+            f"({fmt(abs(zfw_margin), ' lb')} {zfw_word})"
+        )
         lines.append("")
     ramp_and_takeoff_identical = result.ramp.total_weight_lb == result.takeoff.total_weight_lb
     if ramp_and_takeoff_identical:
@@ -440,12 +624,15 @@ async def flight_review_confirm(
 
     await state.clear()
 
-    if result.overall_status == LimitStatus.WITHIN:
+    if result.overall_status != LimitStatus.OUT_OF_LIMITS:
+        # ON LIMIT is a valid boundary result, not a request to change the loading.
         await callback.message.answer("\n".join(lines), reply_markup=main_menu_keyboard(lang))
     else:
         await callback.message.answer("\n".join(lines))
         recs = flight_service.recommend(profile, calc_input)
-        await callback.message.answer(_recommendation_text(recs, lang), reply_markup=main_menu_keyboard(lang))
+        await callback.message.answer(
+            _recommendation_text(recs, lang), reply_markup=main_menu_keyboard(lang)
+        )
 
     await callback.answer()
 
@@ -458,6 +645,10 @@ def _history_summary(calc) -> str:
         result = json.loads(calc.result_snapshot_json)
     except (ValueError, TypeError):
         return "status unavailable"
+    if not isinstance(result, dict):
+        # Older builds accidentally stored dataclasses as opaque strings. Keep history usable
+        # instead of crashing while those legacy records remain in the database.
+        return "legacy result — details unavailable"
 
     status = result.get("overall_status", "?")
     weight = None
@@ -466,7 +657,10 @@ def _history_summary(calc) -> str:
     elif isinstance(result.get("takeoff"), dict):
         weight = result["takeoff"].get("total_weight_lb")
 
-    weight_text = f"{Decimal(weight):,.1f} lb" if weight is not None else "? lb"
+    try:
+        weight_text = f"{Decimal(str(weight)):,.1f} lb" if weight is not None else "? lb"
+    except (ArithmeticError, ValueError):
+        weight_text = "? lb"
     status_text = {
         "WITHIN": "Within Limits",
         "ON_LIMIT": "On Limit",

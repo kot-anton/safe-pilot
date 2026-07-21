@@ -29,6 +29,10 @@ class CGCheckResult:
     aft_limit_in: Decimal
     forward_margin_in: Decimal
     aft_margin_in: Decimal
+    # False means the aircraft weight is outside the published envelope weight range.
+    # The forward/aft values are then only the nearest row for diagnostic context and must
+    # never be presented as valid limits at the calculated weight.
+    weight_within_envelope: bool = True
 
 
 class CGEnvelope:
@@ -47,12 +51,15 @@ class CGEnvelope:
                 raise InvalidEnvelopeError("Envelope weights must be strictly increasing")
 
         for row in sorted_rows:
+            if not all(
+                value.is_finite()
+                for value in (row.weight_lb, row.forward_cg_limit_in, row.aft_cg_limit_in)
+            ):
+                raise InvalidEnvelopeError("Envelope values must be finite")
             if row.weight_lb <= 0:
                 raise InvalidEnvelopeError("Envelope weight must be positive")
             if row.forward_cg_limit_in > row.aft_cg_limit_in + EPSILON:
                 raise InvalidEnvelopeError("Forward CG limit must be <= aft CG limit")
-            if row.forward_cg_limit_in < 0 or row.aft_cg_limit_in < 0:
-                raise InvalidEnvelopeError("CG limits must be positive")
 
         self.rows = sorted_rows
 
@@ -105,6 +112,7 @@ class CGEnvelope:
                 aft_limit_in=nearest.aft_cg_limit_in,
                 forward_margin_in=cg_in - nearest.forward_cg_limit_in,
                 aft_margin_in=nearest.aft_cg_limit_in - cg_in,
+                weight_within_envelope=False,
             )
 
         forward_limit, aft_limit = limits

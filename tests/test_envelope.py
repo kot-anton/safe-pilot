@@ -88,3 +88,16 @@ def test_rejects_forward_limit_greater_than_aft():
                 EnvelopeRow(D("2400"), D("37.0"), D("47.3")),
             ]
         )
+
+
+def test_check_distinguishes_weight_outside_envelope_from_cg_direction():
+    env = make_envelope()
+    result = env.check(D("2100"), D("40"))
+    assert result.status == LimitStatus.OUT_OF_LIMITS
+    assert result.weight_within_envelope is False
+
+
+def test_check_marks_in_range_weight_explicitly():
+    env = make_envelope()
+    result = env.check(D("2300"), D("40"))
+    assert result.weight_within_envelope is True

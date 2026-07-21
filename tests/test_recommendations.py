@@ -241,10 +241,62 @@ def test_recommendation_never_moves_weight_out_of_front_seats():
     assert not any(r.target_station_id == "front" for r in move_recs)
 
 
+def test_recommendation_does_not_move_ambiguous_custom_load():
+    """CUSTOM may mean installed equipment or another fixed item; only explicit BAGGAGE is
+    treated as movable cargo by the automatic solver."""
+    from app.domain.envelope import CGEnvelope, EnvelopeRow
+    from app.domain.models import AircraftProfile, StationProfile, StationType
+
+    profile = AircraftProfile(
+        tail_number="N-CUSTOM",
+        revision_number=1,
+        basic_empty_weight_lb=D("1000"),
+        basic_empty_moment_lb_in=D("40000"),
+        max_takeoff_weight_lb=D("2000"),
+        stations=[
+            StationProfile(
+                station_id="custom_aft",
+                name="Equipment Box",
+                station_type=StationType.CUSTOM,
+                default_arm_in=D("150"),
+                maximum_weight_lb=D("300"),
+            ),
+            StationProfile(
+                station_id="baggage_forward",
+                name="Forward Baggage",
+                station_type=StationType.BAGGAGE,
+                default_arm_in=D("20"),
+                maximum_weight_lb=D("300"),
+            ),
+        ],
+        envelope=CGEnvelope(
+            [
+                EnvelopeRow(D("1000"), D("30"), D("55")),
+                EnvelopeRow(D("1600"), D("30"), D("55")),
+            ]
+        ),
+    )
+    calc_input = CalculationInput(
+        loads=[
+            LoadItemInput(station_id="custom_aft", weight_lb=D("250")),
+            LoadItemInput(station_id="baggage_forward", weight_lb=D("0")),
+        ],
+        fuel=[],
+    )
+
+    recs = generate_recommendations(profile, calc_input)
+
+    assert not any(
+        rec.kind == RecommendationKind.MOVE_LOAD
+        and rec.station_id == "custom_aft"
+        for rec in recs
+    )
+
+
 def test_recommendation_shifts_fuel_between_tanks_to_fix_forward_cg():
     """A forward-CG problem can sometimes be fixed by moving fuel from a forward tank to an
-    aft tank, leaving total fuel (and total weight) unchanged -- a real, always-available fix
-    distinct from adding/reducing fuel or reseating anyone."""
+    aft tank, leaving total fuel (and total weight) unchanged. This is opt-in because many
+    aircraft do not permit a pilot-controlled tank-to-tank transfer."""
     from app.domain.envelope import CGEnvelope, EnvelopeRow
     from app.domain.models import AircraftProfile, StationProfile, StationType
 
@@ -280,7 +332,9 @@ def test_recommendation_shifts_fuel_between_tanks_to_fix_forward_cg():
     result = calculate(profile, calc_input)
     assert result.ramp.cg_check.status == LimitStatus.OUT_OF_LIMITS  # forward of limit
 
-    recs = generate_recommendations(profile, calc_input)
+    recs = generate_recommendations(
+        profile, calc_input, allow_fuel_transfer=True
+    )
     shift_recs = [r for r in recs if r.kind == RecommendationKind.SHIFT_FUEL]
     assert shift_recs, "expected at least one fuel-shift recommendation"
     rec = shift_recs[0]

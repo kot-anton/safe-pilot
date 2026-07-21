@@ -7,6 +7,7 @@ from decimal import Decimal
 from app.database.models import Aircraft, AircraftRevision
 from app.domain.calculator import ENGINE_VERSION, calculate
 from app.domain.models import AircraftProfile, CalculationInput, CalculationResult
+from app.domain.quick_recommendations import QuickRecommendation, generate_quick_recommendations
 from app.domain.recommendations import Recommendation, generate_recommendations
 from app.repositories.flight_repository import FlightRepository
 from app.services.aircraft_service import build_domain_profile
@@ -22,7 +23,10 @@ class _DecimalEncoder(json.JSONEncoder):
 
 
 def _snapshot(obj) -> str:
-    return json.dumps(obj, cls=_DecimalEncoder, default=lambda o: str(o))
+    # Do not pass a second ``default=`` callback here: json.JSONEncoder would replace the
+    # custom encoder's ``default`` method, turning dataclasses into opaque strings and breaking
+    # history/replay. _DecimalEncoder keeps snapshots as structured JSON.
+    return json.dumps(obj, cls=_DecimalEncoder)
 
 
 class FlightService:
@@ -39,9 +43,26 @@ class FlightService:
         self,
         profile: AircraftProfile,
         calc_input: CalculationInput,
-        min_fuel_gal: dict[str, Decimal] | None,
+        min_fuel_gal: dict[str, Decimal] | None = None,
     ) -> list[Recommendation]:
         return generate_recommendations(profile, calc_input, min_fuel_gal=min_fuel_gal)
+
+    def recommend_quick(
+        self,
+        profile: AircraftProfile,
+        *,
+        front_lb: Decimal,
+        rear_lb: Decimal,
+        baggage_lb: Decimal,
+        total_fuel_gal: Decimal,
+    ) -> list[QuickRecommendation]:
+        return generate_quick_recommendations(
+            profile,
+            front_lb=front_lb,
+            rear_lb=rear_lb,
+            baggage_lb=baggage_lb,
+            total_fuel_gal=total_fuel_gal,
+        )
 
     async def persist_calculation(
         self,
