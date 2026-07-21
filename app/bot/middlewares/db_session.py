@@ -11,6 +11,17 @@ from app.repositories.flight_repository import FlightRepository
 from app.services.aircraft_service import AircraftService
 from app.services.flight_service import FlightService
 
+SUPPORTED_LANGUAGES = {"en", "ru"}
+
+
+def preferred_language(telegram_language_code: str | None, fallback: str) -> str:
+    """Choose a supported UI language for a new user without changing returning users."""
+    telegram_language = (telegram_language_code or "").split("-", 1)[0].lower()
+    if telegram_language in SUPPORTED_LANGUAGES:
+        return telegram_language
+    normalized_fallback = fallback.lower()
+    return normalized_fallback if normalized_fallback in SUPPORTED_LANGUAGES else "en"
+
 
 class DbSessionMiddleware(BaseMiddleware):
     """Opens one DB session/transaction per update and injects ready-to-use services.
@@ -34,7 +45,8 @@ class DbSessionMiddleware(BaseMiddleware):
                 tg_user = data.get("event_from_user")
                 if tg_user is not None:
                     data["user"] = await aircraft_service.get_or_create_user(
-                        tg_user.id, settings.default_language
+                        tg_user.id,
+                        preferred_language(tg_user.language_code, settings.default_language),
                     )
 
                 result = await handler(event, data)
