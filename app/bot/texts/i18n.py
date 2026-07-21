@@ -21,7 +21,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "Main menu:",
         "ru": "Главное меню:",
     },
-    "menu_my_aircraft": {"en": "My Aircrafts", "ru": "Мои ВС"},
+    "menu_my_aircraft": {"en": "My Aircraft", "ru": "Мои ВС"},
     "menu_add_aircraft": {"en": "Add Aircraft", "ru": "Добавить ВС"},
     "menu_select_aircraft": {"en": "🛩 Change Aircraft", "ru": "🛩 Сменить ВС"},
     "menu_update_aircraft": {"en": "Edit Aircraft", "ru": "Изменить ВС"},
@@ -110,9 +110,21 @@ STRINGS: dict[str, dict[str, str]] = {
     "btn_arm_adjustable": {"en": "Adjustable", "ru": "Регулируемое"},
     "ask_station_min_arm": {"en": "Minimum ARM, in inches:", "ru": "Минимальное плечо, в дюймах:"},
     "ask_station_max_arm": {"en": "Maximum ARM, in inches:", "ru": "Максимальное плечо, в дюймах:"},
+    "ask_station_max_weight": {
+        "en": "Maximum load for this station, in pounds (optional; Skip if not published):",
+        "ru": "Максимальная нагрузка этой станции, в фунтах (необязательно; пропустите, если не опубликована):",
+    },
     "ask_fuel_max_volume": {
-        "en": "Maximum fuel volume for this tank, in US gal:",
-        "ru": "Максимальный объём топлива в этом баке, в US гал:",
+        "en": "Maximum usable fuel volume for this tank, in US gal:",
+        "ru": "Максимальный полезный объём топлива в этом баке, в US гал:",
+    },
+    "ask_fuel_density": {
+        "en": "Fuel density, in lb per US gal. Enter a value or use the 100LL default:",
+        "ru": "Плотность топлива, фунт/US гал. Введите значение или используйте стандарт для 100LL:",
+    },
+    "btn_use_100ll_density": {
+        "en": "Use 6.0 lb/gal (100LL)",
+        "ru": "Использовать 6.0 фунт/гал (100LL)",
     },
     "review_aircraft_summary": {"en": "Please review the aircraft profile:", "ru": "Проверьте профиль ВС:"},
     "aircraft_saved": {"en": "Aircraft profile saved.", "ru": "Профиль ВС сохранён."},
@@ -120,7 +132,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "New aircraft revision saved. Historical data and past calculations are unaffected.",
         "ru": "Сохранена новая ревизия ВС. Исторические данные и прошлые расчёты не изменены.",
     },
-    "my_aircraft_header": {"en": "Your aircrafts:", "ru": "Ваши ВС:"},
+    "my_aircraft_header": {"en": "Your aircraft:", "ru": "Ваши ВС:"},
     "result_footer": {
         "en": "Based on the saved aircraft profile. Verify against current aircraft records.",
         "ru": "На основе сохранённого профиля ВС. Сверьте с актуальной документацией ВС.",
@@ -128,7 +140,20 @@ STRINGS: dict[str, dict[str, str]] = {
     "select_aircraft_prompt": {"en": "Select an aircraft:", "ru": "Выберите ВС:"},
     "aircraft_selected": {"en": "Active aircraft set.", "ru": "Активное ВС установлено."},
     "ask_load_at_station": {"en": "{station} weight, in lb:", "ru": "Вес на «{station}», в фунтах:"},
-    "ask_fuel_starting": {"en": "Starting fuel in {station}, in US gal:", "ru": "Начальное топливо в {station}, в US гал:"},
+    "ask_load_at_adjustable_station": {
+        "en": (
+            "{station}: enter weight in lb and the actual ARM in inches as weight / ARM "
+            "(allowed ARM {minimum}-{maximum})."
+        ),
+        "ru": (
+            "{station}: введите вес в фунтах и фактическое плечо ARM в дюймах как вес / ARM "
+            "(допустимое ARM {minimum}-{maximum})."
+        ),
+    },
+    "ask_fuel_starting": {
+        "en": "Fuel in {station} at takeoff, in US gal:",
+        "ru": "Топливо в {station} на взлёте, US гал:",
+    },
     "ask_fuel_enroute": {
         "en": "Planned fuel burn from {station}, in US gal (Skip = landing not evaluated):",
         "ru": "Плановый расход из {station}, US гал (Пропустить = посадка не оценивается):",
@@ -149,14 +174,14 @@ STRINGS: dict[str, dict[str, str]] = {
     "recommendations_header": {"en": "Suggested adjustments:", "ru": "Возможные варианты корректировки:"},
     "no_recommendations": {
         "en": (
-            "No single fuel, baggage, or load-move adjustment brings every phase within limits "
-            "at once. A different loading arrangement (who sits where, how fuel is split) may "
-            "still work, but isn't something this solver searches for automatically."
+            "No verified baggage or fuel adjustment brings every evaluated condition within "
+            "limits. Change the planned cargo or fuel load and recalculate. Passenger reseating "
+            "is not suggested."
         ),
         "ru": (
-            "Ни одна корректировка топлива, багажа или груза не приводит все фазы полёта в "
-            "пределы одновременно. Другая схема загрузки (кто где сидит, как разлито топливо) "
-            "может сработать, но автоматически не подбирается."
+            "Не найдено подтверждённой корректировки багажа или топлива, которая приводит все "
+            "проверяемые состояния в допустимые пределы. Измените груз или запас топлива и "
+            "пересчитайте. Пересадка пассажиров не предлагается."
         ),
     },
     "history_empty": {"en": "No calculations recorded yet.", "ru": "Расчётов пока нет."},

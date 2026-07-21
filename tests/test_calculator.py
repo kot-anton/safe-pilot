@@ -100,7 +100,12 @@ def test_ramp_takeoff_landing_fuel_subtraction():
                 taxi_burn_gal=D("1"),
                 enroute_burn_gal=D("10"),
             ),
-            FuelStationInput(station_id="aux_fuel", starting_gal=D("0")),
+            FuelStationInput(
+                station_id="aux_fuel",
+                starting_gal=D("0"),
+                enroute_burn_gal=D("0"),
+                landing_fuel_provided=True,
+            ),
         ]
     )
     result = calculate(profile, calc_input)
@@ -117,6 +122,32 @@ def test_landing_not_evaluated_when_no_burn_provided():
     profile = make_test_profile()
     calc_input = basic_input()  # no taxi/enroute burn at all
     result = calculate(profile, calc_input)
+    assert result.landing_evaluated is False
+    assert result.landing is None
+
+
+def test_landing_not_evaluated_when_one_of_multiple_tanks_is_skipped():
+    """A partial per-tank burn entry must not silently treat the skipped tank as zero burn."""
+    profile = make_test_profile()
+    calc_input = basic_input(
+        fuel=[
+            FuelStationInput(
+                station_id="main_fuel",
+                starting_gal=D("30"),
+                enroute_burn_gal=D("10"),
+                landing_fuel_provided=True,
+            ),
+            FuelStationInput(
+                station_id="aux_fuel",
+                starting_gal=D("10"),
+                enroute_burn_gal=D("0"),
+                landing_fuel_provided=False,
+            ),
+        ]
+    )
+
+    result = calculate(profile, calc_input)
+
     assert result.landing_evaluated is False
     assert result.landing is None
 
@@ -206,3 +237,25 @@ def test_adjustable_arm_out_of_range_rejected():
     )
     with pytest.raises(InvalidInputError):
         calculate(profile, calc_input)
+
+
+def test_zero_fuel_limit_is_reported_explicitly_in_advanced_result():
+    profile = make_test_profile(max_zero_fuel_weight_lb=D("2000"))
+    calc_input = basic_input(
+        loads=[
+            LoadItemInput(station_id="front_seats", weight_lb=D("300")),
+            LoadItemInput(station_id="rear_seats", weight_lb=D("250")),
+            LoadItemInput(station_id="baggage_1", weight_lb=D("0")),
+        ],
+        fuel=[
+            FuelStationInput(station_id="main_fuel", starting_gal=D("0")),
+            FuelStationInput(station_id="aux_fuel", starting_gal=D("0")),
+        ],
+    )
+
+    result = calculate(profile, calc_input)
+
+    assert result.zero_fuel_weight_lb == D("2050")
+    assert result.zero_fuel_limit_lb == D("2000")
+    assert result.zero_fuel_status == LimitStatus.OUT_OF_LIMITS
+    assert result.overall_status == LimitStatus.OUT_OF_LIMITS

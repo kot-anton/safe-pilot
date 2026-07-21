@@ -17,6 +17,8 @@ def parse_decimal(text: str, *, allow_negative: bool = False) -> Decimal:
         value = to_decimal(text)
     except (InvalidOperation, ValueError) as exc:
         raise InputParseError("not a valid number") from exc
+    if not value.is_finite():
+        raise InputParseError("number must be finite")
     if not allow_negative and value < 0:
         raise InputParseError("value cannot be negative")
     return value

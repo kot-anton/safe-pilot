@@ -50,3 +50,22 @@ def test_existing_data_survives_fuel_system_migration(tmp_path):
     assert row is not None
     assert row[0] == "N123AB"
     assert row[1] in (0, False)  # defaulted to false, not null, not dropped
+
+
+def test_postgresql_offline_migration_repairs_circular_foreign_keys_and_enum():
+    """The generated PostgreSQL migration SQL must include integrity constraints that the
+    original ``use_alter`` create-table statements omitted, and truly remove BALLAST from the
+    enum instead of altering the column to the same unchanged type."""
+    import io
+
+    output = io.StringIO()
+    cfg = _alembic_config("postgresql+asyncpg://user:pass@localhost/safe_pilot")
+    cfg.output_buffer = output
+
+    command.upgrade(cfg, "head", sql=True)
+    sql = output.getvalue()
+
+    assert "CONSTRAINT fk_selected_aircraft" in sql
+    assert "CONSTRAINT fk_active_revision" in sql
+    assert "ALTER TYPE stationtypeenum RENAME TO stationtypeenum_old" in sql
+    assert "CREATE TYPE stationtypeenum AS ENUM ('FRONT_SEATS', 'REAR_SEATS', 'PASSENGER', 'BAGGAGE', 'FUEL', 'CUSTOM')" in sql

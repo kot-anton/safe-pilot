@@ -17,7 +17,7 @@ logger = logging.getLogger("weight_and_balance")
 
 
 async def main() -> None:
-    bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode=None))
+    bot = Bot(token=settings.required_bot_token(), default=DefaultBotProperties(parse_mode=None))
     dispatcher = Dispatcher(storage=MemoryStorage())
 
     db_middleware = DbSessionMiddleware()

@@ -82,3 +82,154 @@ def test_quick_calculation_exact_split_required_status():
     result = run_quick_calculation(profile, front_lb=D("0"), rear_lb=D("0"), baggage_lb=D("0"), total_fuel_gal=D("20"))
     assert result.fuel_range_status == FuelRangeStatus.EXACT_SPLIT_REQUIRED
     assert result.overall_status == LimitStatus.OUT_OF_LIMITS
+
+
+def test_quick_station_limit_is_reported_not_rejected():
+    """A published baggage limit exceedance is a calculation result, allowing a removal
+    recommendation, rather than a generic invalid-input failure."""
+    from app.domain.envelope import CGEnvelope, EnvelopeRow
+    from app.domain.models import AircraftProfile, StationProfile, StationType
+
+    profile = AircraftProfile(
+        tail_number="N-STATION",
+        revision_number=1,
+        basic_empty_weight_lb=D("1000"),
+        basic_empty_moment_lb_in=D("40000"),
+        max_takeoff_weight_lb=D("2000"),
+        stations=[
+            StationProfile(
+                station_id="baggage",
+                name="Baggage",
+                station_type=StationType.BAGGAGE,
+                default_arm_in=D("100"),
+                maximum_weight_lb=D("200"),
+            )
+        ],
+        envelope=CGEnvelope(
+            [
+                EnvelopeRow(D("1000"), D("35"), D("55")),
+                EnvelopeRow(D("2000"), D("35"), D("55")),
+            ]
+        ),
+    )
+
+    result = run_quick_calculation(
+        profile,
+        front_lb=D("0"),
+        rear_lb=D("0"),
+        baggage_lb=D("300"),
+        total_fuel_gal=D("0"),
+    )
+
+    assert result.station_status == LimitStatus.OUT_OF_LIMITS
+    assert result.overall_status == LimitStatus.OUT_OF_LIMITS
+    assert len(result.station_violations) == 1
+    violation = result.station_violations[0]
+    assert violation.station_name == "Baggage"
+    assert violation.actual_weight_lb == D("300")
+    assert violation.maximum_weight_lb == D("200")
+
+
+def test_quick_calculation_checks_maximum_zero_fuel_weight():
+    from app.domain.envelope import CGEnvelope, EnvelopeRow
+    from app.domain.models import AircraftProfile, StationProfile, StationType
+
+    profile = AircraftProfile(
+        tail_number="N-ZFW",
+        revision_number=1,
+        basic_empty_weight_lb=D("1000"),
+        basic_empty_moment_lb_in=D("40000"),
+        max_takeoff_weight_lb=D("2000"),
+        max_zero_fuel_weight_lb=D("1600"),
+        stations=[
+            StationProfile(
+                station_id="front",
+                name="Front Seats",
+                station_type=StationType.FRONT_SEATS,
+                default_arm_in=D("40"),
+            )
+        ],
+        envelope=CGEnvelope(
+            [
+                EnvelopeRow(D("1000"), D("30"), D("60")),
+                EnvelopeRow(D("2000"), D("30"), D("60")),
+            ]
+        ),
+    )
+
+    result = run_quick_calculation(
+        profile,
+        front_lb=D("700"),
+        rear_lb=D("0"),
+        baggage_lb=D("0"),
+        total_fuel_gal=D("0"),
+    )
+
+    assert result.total_weight_lb < profile.max_takeoff_weight_lb
+    assert result.takeoff_weight_status == LimitStatus.WITHIN
+    assert result.zero_fuel_weight_lb == D("1700")
+    assert result.zero_fuel_status == LimitStatus.OUT_OF_LIMITS
+    assert result.weight_status == LimitStatus.OUT_OF_LIMITS
+    assert result.overall_status == LimitStatus.OUT_OF_LIMITS
+
+
+def test_quick_calculation_rejects_custom_per_flight_station_instead_of_omitting_it():
+    """A custom load must never disappear from the four-input result just because the quick
+    UI has no field for it. The pilot must use the per-station Advanced calculation."""
+    from app.domain.envelope import CGEnvelope, EnvelopeRow
+    from app.domain.models import AircraftProfile, StationProfile, StationType
+
+    profile = AircraftProfile(
+        tail_number="N-CUSTOM",
+        revision_number=1,
+        basic_empty_weight_lb=D("1000"),
+        basic_empty_moment_lb_in=D("40000"),
+        max_takeoff_weight_lb=D("2000"),
+        stations=[
+            StationProfile(
+                station_id="front",
+                name="Front Seats",
+                station_type=StationType.FRONT_SEATS,
+                default_arm_in=D("40"),
+            ),
+            StationProfile(
+                station_id="survival_kit",
+                name="Survival Kit",
+                station_type=StationType.CUSTOM,
+                default_arm_in=D("100"),
+                maximum_weight_lb=D("50"),
+            ),
+        ],
+        envelope=CGEnvelope(
+            [
+                EnvelopeRow(D("1000"), D("30"), D("60")),
+                EnvelopeRow(D("2000"), D("30"), D("60")),
+            ]
+        ),
+    )
+
+    with pytest.raises(InvalidInputError, match="Survival Kit"):
+        run_quick_calculation(
+            profile,
+            front_lb=D("200"),
+            rear_lb=D("0"),
+            baggage_lb=D("0"),
+            total_fuel_gal=D("0"),
+        )
+
+
+def test_quick_result_marks_weight_outside_published_cg_envelope_range():
+    profile = make_test_profile()
+    result = run_quick_calculation(
+        profile,
+        front_lb=D("0"),
+        rear_lb=D("0"),
+        baggage_lb=D("0"),
+        total_fuel_gal=D("0"),
+    )
+
+    # The calculated weight is below this synthetic envelope's 2200-lb minimum. Nearest-row
+    # numbers may be retained for diagnostics, but they are not valid limits at this weight.
+    assert result.fuel_range_status == FuelRangeStatus.OUT_ALL
+    assert result.forward_check is not None
+    assert result.forward_check.weight_within_envelope is False

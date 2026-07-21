@@ -17,7 +17,7 @@ from app.domain.models import (
     StationType,
 )
 
-ENGINE_VERSION = "1.0.0"
+ENGINE_VERSION = "1.2.0"
 
 _WORST_STATUS_ORDER = {
     LimitStatus.WITHIN: 0,
@@ -30,15 +30,39 @@ def _worse(a: LimitStatus, b: LimitStatus) -> LimitStatus:
     return a if _WORST_STATUS_ORDER[a] >= _WORST_STATUS_ORDER[b] else b
 
 
+def _require_finite(value: Decimal, label: str) -> None:
+    if not value.is_finite():
+        raise InvalidInputError(f"{label} must be finite")
+
+
 def _validate_inputs(profile: AircraftProfile, calc_input: CalculationInput) -> None:
-    known_ids = {s.station_id for s in profile.stations}
+    known_ids = {station.station_id for station in profile.stations}
+    load_ids = [load.station_id for load in calc_input.loads]
+    fuel_ids = [fuel.station_id for fuel in calc_input.fuel]
+
+    if len(load_ids) != len(set(load_ids)):
+        raise InvalidInputError("The same load station was entered more than once")
+    if len(fuel_ids) != len(set(fuel_ids)):
+        raise InvalidInputError("The same fuel station was entered more than once")
+    overlap = set(load_ids) & set(fuel_ids)
+    if overlap:
+        raise InvalidInputError(
+            f"A station cannot be entered as both load and fuel: {', '.join(sorted(overlap))}"
+        )
 
     for load in calc_input.loads:
+        _require_finite(load.weight_lb, f"Load weight at station '{load.station_id}'")
+        if load.arm_in is not None:
+            _require_finite(load.arm_in, f"ARM at station '{load.station_id}'")
         if load.weight_lb < 0:
             raise InvalidInputError(f"Load weight at station '{load.station_id}' cannot be negative")
         if load.station_id not in known_ids:
             raise InvalidInputError(f"Unknown station id '{load.station_id}'")
         station = profile.station(load.station_id)
+        if station.station_type == StationType.FUEL:
+            raise InvalidInputError(
+                f"Fuel station '{station.name}' must be entered in gallons, not as a generic load"
+            )
         if station.is_adjustable_arm:
             if load.arm_in is None:
                 raise InvalidInputError(f"Station '{station.name}' requires an ARM to be specified")
@@ -49,6 +73,12 @@ def _validate_inputs(profile: AircraftProfile, calc_input: CalculationInput) -> 
                 )
 
     for fuel in calc_input.fuel:
+        for value, label in (
+            (fuel.starting_gal, "Starting fuel"),
+            (fuel.taxi_burn_gal, "Taxi fuel burn"),
+            (fuel.enroute_burn_gal, "Enroute fuel burn"),
+        ):
+            _require_finite(value, f"{label} at station '{fuel.station_id}'")
         if fuel.station_id not in known_ids:
             raise InvalidInputError(f"Unknown fuel station id '{fuel.station_id}'")
         station = profile.station(fuel.station_id)
@@ -56,6 +86,10 @@ def _validate_inputs(profile: AircraftProfile, calc_input: CalculationInput) -> 
             raise InvalidInputError(f"Station '{station.name}' is not a fuel station")
         if fuel.starting_gal < 0:
             raise InvalidInputError(f"Starting fuel at '{station.name}' cannot be negative")
+        if fuel.taxi_burn_gal < 0:
+            raise InvalidInputError(f"Taxi fuel burn at '{station.name}' cannot be negative")
+        if fuel.enroute_burn_gal < 0:
+            raise InvalidInputError(f"Enroute fuel burn at '{station.name}' cannot be negative")
         if fuel.starting_gal > station.maximum_volume_gal:
             raise InvalidInputError(
                 f"Starting fuel at '{station.name}' ({fuel.starting_gal} gal) exceeds "
@@ -65,20 +99,15 @@ def _validate_inputs(profile: AircraftProfile, calc_input: CalculationInput) -> 
             raise InvalidInputError(f"Taxi fuel burn at '{station.name}' exceeds starting fuel")
         if fuel.taxi_burn_gal + fuel.enroute_burn_gal > fuel.starting_gal:
             raise InvalidInputError(
-                f"Total fuel burn at '{station.name}' exceeds starting fuel (landing fuel would be negative)"
+                f"Total fuel burn at '{station.name}' exceeds starting fuel "
+                "(landing fuel would be negative)"
             )
-
-
-def _load_moment(profile: AircraftProfile, load: LoadItemInput) -> tuple[Decimal, Decimal]:
-    station = profile.station(load.station_id)
-    arm = load.arm_in if station.is_adjustable_arm else station.default_arm_in
-    return load.weight_lb, load.weight_lb * arm
 
 
 def _station_results_for_loads(
     profile: AircraftProfile, loads: list[LoadItemInput]
 ) -> list[StationLoadResult]:
-    results = []
+    results: list[StationLoadResult] = []
     for load in loads:
         station = profile.station(load.station_id)
         arm = load.arm_in if station.is_adjustable_arm else station.default_arm_in
@@ -126,13 +155,13 @@ def _build_phase(
     total_moment = profile.basic_empty_moment_lb_in
     all_station_results = load_results + fuel_results
 
-    for r in all_station_results:
-        total_weight += r.weight_lb
-        total_moment += r.moment_lb_in
+    for result in all_station_results:
+        total_weight += result.weight_lb
+        total_moment += result.moment_lb_in
 
-    cg = total_moment / total_weight if total_weight != 0 else Decimal("0")
-    # A missing envelope means the pilot has not entered one for this aircraft -- the bot
-    # never invents CG limits, so CG is simply not evaluated rather than assumed safe.
+    if total_weight <= 0:
+        raise InvalidInputError("Calculated aircraft weight must be greater than zero")
+    cg = total_moment / total_weight
     cg_check = profile.envelope.check(total_weight, cg) if profile.envelope is not None else None
 
     weight_status = LimitStatus.WITHIN
@@ -143,8 +172,8 @@ def _build_phase(
             weight_status = LimitStatus.ON_LIMIT
 
     station_status = LimitStatus.WITHIN
-    for r in all_station_results:
-        if r.over_station_limit or r.over_capacity:
+    for result in all_station_results:
+        if result.over_station_limit or result.over_capacity:
             station_status = LimitStatus.OUT_OF_LIMITS
 
     overall = _worse(weight_status, station_status)
@@ -164,40 +193,55 @@ def _build_phase(
 
 
 def calculate(profile: AircraftProfile, calc_input: CalculationInput) -> CalculationResult:
-    """Runs the full ramp / takeoff / landing calculation. Raises InvalidInputError on bad input."""
+    """Run the full ramp / takeoff / landing calculation.
+
+    ``InvalidInputError`` is raised for malformed or physically impossible input. Published
+    limit exceedances are returned as deterministic statuses rather than exceptions.
+    """
     _validate_inputs(profile, calc_input)
 
     load_station_results = _station_results_for_loads(profile, calc_input.loads)
+    zero_fuel_weight = profile.basic_empty_weight_lb + sum(
+        (result.weight_lb for result in load_station_results), Decimal("0")
+    )
+    zero_fuel_status = LimitStatus.WITHIN
+    if profile.max_zero_fuel_weight_lb is not None:
+        if zero_fuel_weight > profile.max_zero_fuel_weight_lb:
+            zero_fuel_status = LimitStatus.OUT_OF_LIMITS
+        elif zero_fuel_weight == profile.max_zero_fuel_weight_lb:
+            zero_fuel_status = LimitStatus.ON_LIMIT
 
-    ramp_fuel_results = [_fuel_station_result(profile, f, f.starting_gal) for f in calc_input.fuel]
+    ramp_fuel_results = [_fuel_station_result(profile, fuel, fuel.starting_gal) for fuel in calc_input.fuel]
     ramp = _build_phase(
         "RAMP", profile, load_station_results, ramp_fuel_results, profile.max_ramp_weight_lb
     )
 
     takeoff_fuel_results = [
-        _fuel_station_result(profile, f, f.starting_gal - f.taxi_burn_gal) for f in calc_input.fuel
+        _fuel_station_result(profile, fuel, fuel.starting_gal - fuel.taxi_burn_gal)
+        for fuel in calc_input.fuel
     ]
     takeoff = _build_phase(
         "TAKEOFF", profile, load_station_results, takeoff_fuel_results, profile.max_takeoff_weight_lb
     )
 
-    if profile.max_zero_fuel_weight_lb is not None:
-        zero_fuel_weight = profile.basic_empty_weight_lb + sum(
-            (r.weight_lb for r in load_station_results), Decimal("0")
+    if zero_fuel_status != LimitStatus.WITHIN:
+        ramp = dataclasses.replace(
+            ramp, overall_status=_worse(ramp.overall_status, zero_fuel_status)
         )
-        if zero_fuel_weight > profile.max_zero_fuel_weight_lb:
-            takeoff = dataclasses.replace(
-                takeoff, overall_status=_worse(takeoff.overall_status, LimitStatus.OUT_OF_LIMITS)
-            )
+        takeoff = dataclasses.replace(
+            takeoff, overall_status=_worse(takeoff.overall_status, zero_fuel_status)
+        )
 
     landing_evaluated = calc_input.landing_evaluated
     landing = None
     if landing_evaluated:
         landing_fuel_results = [
             _fuel_station_result(
-                profile, f, f.starting_gal - f.taxi_burn_gal - f.enroute_burn_gal
+                profile,
+                fuel,
+                fuel.starting_gal - fuel.taxi_burn_gal - fuel.enroute_burn_gal,
             )
-            for f in calc_input.fuel
+            for fuel in calc_input.fuel
         ]
         landing = _build_phase(
             "LANDING",
@@ -206,6 +250,10 @@ def calculate(profile: AircraftProfile, calc_input: CalculationInput) -> Calcula
             landing_fuel_results,
             profile.max_landing_weight_lb,
         )
+        if zero_fuel_status != LimitStatus.WITHIN:
+            landing = dataclasses.replace(
+                landing, overall_status=_worse(landing.overall_status, zero_fuel_status)
+            )
 
     overall = _worse(ramp.overall_status, takeoff.overall_status)
     if landing is not None:
@@ -216,5 +264,8 @@ def calculate(profile: AircraftProfile, calc_input: CalculationInput) -> Calcula
         takeoff=takeoff,
         landing=landing,
         landing_evaluated=landing_evaluated,
+        zero_fuel_weight_lb=zero_fuel_weight,
+        zero_fuel_limit_lb=profile.max_zero_fuel_weight_lb,
+        zero_fuel_status=zero_fuel_status,
         overall_status=overall,
     )

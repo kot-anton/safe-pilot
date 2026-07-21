@@ -13,6 +13,7 @@ from app.bot.keyboards.common import (
 from app.bot.texts.i18n import t
 from app.database.models import Aircraft, User
 from app.services.aircraft_service import AircraftService
+from app.services.flight_service import FlightService
 
 router = Router(name="menu")
 
@@ -62,12 +63,18 @@ def _aircraft_card(aircraft: Aircraft) -> str:
 
 @router.callback_query(F.data == "card:calculate")
 async def card_calculate(
-    callback: CallbackQuery, state: FSMContext, user: User, aircraft_service: AircraftService
+    callback: CallbackQuery,
+    state: FSMContext,
+    user: User,
+    aircraft_service: AircraftService,
+    flight_service: FlightService,
 ) -> None:
-    from app.bot.handlers.flight_calculation import start_calculation
+    from app.bot.handlers.quick_calculate import start_quick_calculation
 
     await callback.answer()
-    await start_calculation(callback.message, state, user, aircraft_service)
+    await start_quick_calculation(
+        callback.message, state, user, aircraft_service, flight_service
+    )
 
 
 @router.callback_query(F.data == "card:change_aircraft")
