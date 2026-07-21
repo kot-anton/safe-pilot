@@ -9,7 +9,7 @@ The application already had a sound high-level structure: Telegram was separated
 
 The supplied conversation demonstrates two of the product defects directly: `Fuel Aux Tanks` was accidentally stored as `CUSTOM` and requested in pounds, and the normal calculation asked for `Minimum required takeoff fuel...` even though that value was not needed for the requested calculation. fileciteturn3file0
 
-This revision keeps the existing architecture and database history while correcting the flow and strengthening validation. It also restores Telegram's persistent main menu, offers Quick or Advanced calculation before collecting inputs, removes internal aircraft revision labels from user-facing text, and replaces calculation `0` shortcut buttons with safer history/full-tank actions.
+This revision keeps the existing architecture and database history while correcting the flow and strengthening validation. It also restores Telegram's persistent main menu, offers Quick or Advanced calculation before collecting inputs, removes internal aircraft revision labels from user-facing text, and replaces calculation `0` shortcut buttons with load-history/full-tank actions. Fuel quantity screens never suggest a previous flight's fuel value.
 
 ## Critical and high-priority findings fixed
 
@@ -113,7 +113,7 @@ A new aircraft is selected automatically after creation. Editing still creates a
 - Python bytecode compilation: passed
 - Static undefined/import check with `pyflakes`: passed
 - Whitespace/conflict-marker check with `git diff --check`: passed
-- Automated test suite: **105 passed**
+- Automated test suite: **108 passed**
 - SQLite database migration from the supplied revision to Alembic head: passed
 - SQLite `PRAGMA integrity_check`: `ok`
 - SQLite foreign-key check: no violations

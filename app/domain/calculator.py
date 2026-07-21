@@ -16,6 +16,7 @@ from app.domain.models import (
     StationLoadResult,
     StationType,
 )
+from app.domain.units import compact_decimal
 
 ENGINE_VERSION = "1.2.0"
 
@@ -68,8 +69,9 @@ def _validate_inputs(profile: AircraftProfile, calc_input: CalculationInput) -> 
                 raise InvalidInputError(f"Station '{station.name}' requires an ARM to be specified")
             if not (station.minimum_arm_in <= load.arm_in <= station.maximum_arm_in):
                 raise InvalidInputError(
-                    f"ARM {load.arm_in} for station '{station.name}' is outside its adjustable "
-                    f"range {station.minimum_arm_in}-{station.maximum_arm_in}"
+                    f"ARM {compact_decimal(load.arm_in)} for station '{station.name}' is "
+                    f"outside its adjustable range {compact_decimal(station.minimum_arm_in)}–"
+                    f"{compact_decimal(station.maximum_arm_in)}"
                 )
 
     for fuel in calc_input.fuel:
@@ -92,8 +94,9 @@ def _validate_inputs(profile: AircraftProfile, calc_input: CalculationInput) -> 
             raise InvalidInputError(f"Enroute fuel burn at '{station.name}' cannot be negative")
         if fuel.starting_gal > station.maximum_volume_gal:
             raise InvalidInputError(
-                f"Starting fuel at '{station.name}' ({fuel.starting_gal} gal) exceeds "
-                f"tank capacity ({station.maximum_volume_gal} gal)"
+                f"Starting fuel at '{station.name}' "
+                f"({compact_decimal(fuel.starting_gal)} gal) exceeds tank capacity "
+                f"({compact_decimal(station.maximum_volume_gal)} gal)"
             )
         if fuel.taxi_burn_gal > fuel.starting_gal:
             raise InvalidInputError(f"Taxi fuel burn at '{station.name}' exceeds starting fuel")

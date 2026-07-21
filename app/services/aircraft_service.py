@@ -18,6 +18,7 @@ from app.domain.models import (
     StationType,
     station_type_order,
 )
+from app.domain.units import compact_decimal
 from app.repositories.aircraft_repository import AircraftRepository
 
 USEFUL_LOAD_TOLERANCE_LB = Decimal("5.0")
@@ -121,8 +122,8 @@ def validate_revision_draft(draft: "AircraftRevisionDraft") -> None:
     if abs(calculated_cg - draft.basic_empty_cg_in) > EMPTY_CG_CONSISTENCY_TOLERANCE_IN:
         raise InconsistentAircraftDataError(
             "Basic Empty Weight, Moment, and CG are inconsistent: "
-            f"Moment / Weight gives {calculated_cg:.4f} in, but CG is "
-            f"{draft.basic_empty_cg_in:.4f} in"
+            f"Moment / Weight gives {compact_decimal(calculated_cg, decimal_places=4)} in, "
+            f"but CG is {compact_decimal(draft.basic_empty_cg_in, decimal_places=4)} in"
         )
 
     if draft.known_useful_load_lb is not None:
@@ -190,9 +191,11 @@ def useful_load_warning(draft: AircraftRevisionDraft) -> str | None:
     diff = abs(calculated - draft.known_useful_load_lb)
     if diff > USEFUL_LOAD_TOLERANCE_LB:
         return (
-            f"Entered known useful load ({draft.known_useful_load_lb} lb) differs from the "
-            f"calculated takeoff useful load ({calculated} lb) by {diff} lb, which exceeds the "
-            f"configured tolerance ({USEFUL_LOAD_TOLERANCE_LB} lb). Please double-check your entries."
+            f"Entered known useful load ({compact_decimal(draft.known_useful_load_lb)} lb) "
+            f"differs from the calculated takeoff useful load "
+            f"({compact_decimal(calculated)} lb) by {compact_decimal(diff)} lb, which exceeds "
+            f"the configured tolerance ({compact_decimal(USEFUL_LOAD_TOLERANCE_LB)} lb). "
+            "Please double-check your entries."
         )
     return None
 

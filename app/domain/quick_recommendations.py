@@ -20,7 +20,7 @@ from app.domain.quick_calculation import (
     run_quick_calculation,
 )
 from app.domain.recommendations import ADDED_LOAD_NOTE, FUEL_REDUCTION_NOTE
-from app.domain.units import lb_to_kg
+from app.domain.units import compact_decimal, lb_to_kg
 
 LOAD_STEP_LB = Decimal("1")
 FUEL_STEP_GAL = Decimal("0.1")
@@ -45,27 +45,36 @@ class QuickRecommendation:
     note: str | None = None
 
     def describe(self) -> str:
+        def display(value: Decimal) -> str:
+            return compact_decimal(value, decimal_places=1)
+
         if self.kind == QuickRecommendationKind.ADD_BAGGAGE:
             kg = lb_to_kg(self.delta_lb)
             text = (
-                f"Add {self.delta_lb:.1f} lb ({kg:.1f} kg) of permitted, secured load "
+                f"Add {display(self.delta_lb)} lb ({display(kg)} kg) of permitted, secured load "
                 f"to {self.station_name}."
             )
             if self.target_baggage_lb is not None:
-                text += f" Target baggage load: {self.target_baggage_lb:.1f} lb."
+                text += f" Target baggage load: {display(self.target_baggage_lb)} lb."
             return text
         if self.kind == QuickRecommendationKind.REDUCE_BAGGAGE:
             kg = lb_to_kg(self.delta_lb)
-            text = f"Remove {self.delta_lb:.1f} lb ({kg:.1f} kg) from {self.station_name}."
+            text = (
+                f"Remove {display(self.delta_lb)} lb ({display(kg)} kg) from "
+                f"{self.station_name}."
+            )
             if self.target_baggage_lb is not None:
-                text += f" Target baggage load: {self.target_baggage_lb:.1f} lb."
+                text += f" Target baggage load: {display(self.target_baggage_lb)} lb."
             return text
         if self.kind == QuickRecommendationKind.REDUCE_FUEL:
-            text = f"Reduce total usable fuel by {self.delta_gal:.1f} US gal."
+            text = f"Reduce total usable fuel by {display(self.delta_gal)} US gal."
             if self.delta_lb is not None:
-                text += f" Approximate weight reduction: {self.delta_lb:.1f} lb."
+                text += f" Approximate weight reduction: {display(self.delta_lb)} lb."
             if self.target_total_fuel_gal is not None:
-                text += f" Target total usable fuel: {self.target_total_fuel_gal:.1f} gal."
+                text += (
+                    " Target total usable fuel: "
+                    f"{display(self.target_total_fuel_gal)} gal."
+                )
             return text
         return "Adjustment."
 

@@ -101,7 +101,7 @@ def _current_suffix(data: dict, key: str, unit: str = "", lang: str = "en") -> s
         display = fmt(Decimal(value), unit)
     except (InvalidOperation, ValueError):
         display = f"{value}{unit}"
-    return f"\n\n({t('current_value_hint', lang, value=display)})"
+    return f"\n\n{t('current_value_hint', lang, value=display)}"
 
 
 def _ordered_station_items(stations: list[dict]) -> list[tuple[int, dict]]:
@@ -424,6 +424,21 @@ async def render_station_max_weight(message: Message, state: FSMContext, user: U
     )
 
 
+async def render_total_usable_fuel(
+    message: Message, state: FSMContext, user: User
+) -> None:
+    lang = _lang(user)
+    data = await state.get_data()
+    await message.answer(
+        t("ask_total_usable_fuel", lang)
+        + _current_suffix(data, "total_usable_fuel_gal", " gal", lang),
+        reply_markup=keep_cancel_keyboard(
+            lang,
+            show_keep=_show_keep(data, "total_usable_fuel_gal"),
+        ),
+    )
+
+
 def _fuel_density_keyboard(lang: str, *, show_keep: bool = False) -> InlineKeyboardMarkup:
     rows = [
         [
@@ -551,6 +566,7 @@ RENDERERS: dict[str, "callable"] = {
     AircraftWizard.station_max_weight.state: render_station_max_weight,
     AircraftWizard.station_fuel_max_volume.state: render_station_fuel_max_volume,
     AircraftWizard.station_fuel_density.state: render_station_fuel_density,
+    AircraftWizard.total_usable_fuel.state: render_total_usable_fuel,
     AircraftWizard.envelope_rows.state: render_envelope_rows,
     AircraftWizard.review.state: render_review,
 }
@@ -1177,7 +1193,10 @@ async def got_station_edit_arm(message: Message, state: FSMContext, user: User) 
                 t(
                     "error_generic",
                     lang,
-                    detail=f"ARM must be inside the configured range {minimum}-{maximum}",
+                    detail=(
+                        "ARM must be inside the configured range "
+                        f"{compact_decimal(minimum)}–{compact_decimal(maximum)}"
+                    ),
                 )
             )
             return
@@ -1298,7 +1317,13 @@ async def default_station_edit_fuel_density(
 
 @router.callback_query(AircraftWizard.station_add_prompt, F.data == "wizard:no")
 async def stations_done(callback: CallbackQuery, state: FSMContext, user: User) -> None:
-    await goto(callback.message, state, user, AircraftWizard.envelope_rows, render_envelope_rows)
+    await goto(
+        callback.message,
+        state,
+        user,
+        AircraftWizard.total_usable_fuel,
+        render_total_usable_fuel,
+    )
     await callback.answer()
 
 
@@ -1307,8 +1332,85 @@ async def done_stations_from_type_screen(callback: CallbackQuery, state: FSMCont
     """Escape hatch for pilots who land on the station-type picker (e.g. after tapping "Yes" by
     habit) but actually have nothing more to add -- lets them finish without backing out to the
     Add a station? prompt first."""
-    await goto(callback.message, state, user, AircraftWizard.envelope_rows, render_envelope_rows)
+    await goto(
+        callback.message,
+        state,
+        user,
+        AircraftWizard.total_usable_fuel,
+        render_total_usable_fuel,
+    )
     await callback.answer()
+
+
+def _configured_total_usable_fuel(data: dict) -> Decimal:
+    return sum(
+        (
+            Decimal(station["maximum_volume_gal"])
+            for station in data.get("stations", [])
+            if station.get("station_type") == StationType.FUEL.value
+            and station.get("maximum_volume_gal") is not None
+        ),
+        Decimal("0"),
+    )
+
+
+async def _accept_total_usable_fuel(
+    message: Message,
+    state: FSMContext,
+    user: User,
+    entered_total: Decimal,
+) -> None:
+    lang = _lang(user)
+    data = await state.get_data()
+    configured_total = _configured_total_usable_fuel(data)
+    if entered_total != configured_total:
+        await message.answer(
+            t(
+                "fuel_total_mismatch",
+                lang,
+                entered=fmt(entered_total, " gal"),
+                configured=fmt(configured_total, " gal"),
+            )
+        )
+        return
+    await state.update_data(
+        total_usable_fuel_gal=compact_decimal(entered_total)
+    )
+    await goto(
+        message,
+        state,
+        user,
+        AircraftWizard.envelope_rows,
+        render_envelope_rows,
+    )
+
+
+@router.message(AircraftWizard.total_usable_fuel, F.text)
+async def got_total_usable_fuel(
+    message: Message, state: FSMContext, user: User
+) -> None:
+    try:
+        total = parse_decimal(message.text)
+    except InputParseError as exc:
+        await message.answer(t("error_generic", _lang(user), detail=str(exc)))
+        return
+    await _accept_total_usable_fuel(message, state, user, total)
+
+
+@router.callback_query(
+    AircraftWizard.total_usable_fuel, F.data == "wizard:keep"
+)
+async def keep_total_usable_fuel(
+    callback: CallbackQuery, state: FSMContext, user: User
+) -> None:
+    data = await state.get_data()
+    current = data.get("total_usable_fuel_gal")
+    await callback.answer()
+    if current is None:
+        return
+    await _accept_total_usable_fuel(
+        callback.message, state, user, Decimal(current)
+    )
 
 
 @router.callback_query(AircraftWizard.station_type, F.data.startswith("stype:"))
@@ -1814,6 +1916,9 @@ def render_summary(data: dict, lang: str) -> str:
             ),
             Decimal("0"),
         )
+        confirmed_total = data.get("total_usable_fuel_gal")
+        if confirmed_total is not None:
+            total_usable_fuel = Decimal(confirmed_total)
         lines.extend(
             [
                 "",

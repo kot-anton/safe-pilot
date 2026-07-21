@@ -18,6 +18,9 @@ The quick calculation asks only:
 3. Combined baggage weight, lb, when configured
 4. Total usable fuel on board, US gal
 
+Fuel entry screens provide a saved-capacity **Full tanks** shortcut but deliberately do not
+suggest a previous flight's fuel quantity. Occupant/load fields may still offer the last value.
+
 The result shows:
 
 - takeoff weight and margin;
@@ -67,12 +70,14 @@ Quick Setup collects the minimum profile needed for the normal workflow:
 - Maximum Takeoff Weight;
 - front/rear/baggage stations and their ARMs;
 - each usable fuel tank capacity, ARM, and confirmed fuel density;
+- total usable fuel confirmation;
 - weight-dependent CG envelope rows.
 
-Each tank's saved usable capacity is authoritative. The bot adds those configured values to
-show the aircraft's total usable fuel and to build the **Full tanks** shortcut; it does not
-keep a second hidden or hardcoded total. Fuel density is configurable because gallons must be
-converted to weight for the calculation, but it is omitted from the normal profile review.
+The pilot must explicitly enter total usable fuel before the profile can be reviewed or saved.
+The bot requires that confirmation to equal the sum of the configured tank capacities. Individual
+tank capacities remain authoritative for calculation and the **Full tanks** shortcut, so the
+profile cannot retain two contradictory fuel totals. Fuel density is configurable because gallons
+must be converted to weight for the calculation, but it is omitted from the normal profile review.
 
 Basic Empty Moment is likewise not an aircraft template constant. If the pilot enters Basic
 Empty CG, the bot derives moment as `Basic Empty Weight × Basic Empty CG`; if the aircraft
@@ -165,7 +170,7 @@ Run tests:
 pytest -q
 ```
 
-Current review build: **105 tests passing**.
+Current review build: **108 tests passing**.
 
 ## Docker
 

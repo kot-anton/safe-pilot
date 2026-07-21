@@ -60,7 +60,6 @@ async def test_quick_fuel_prompt_identifies_configured_tanks_and_saved_total():
         {
             "fuel_tank_labels": ["Main", "Aux"],
             "full_fuel_gal": "53.0000",
-            "last_total_fuel_gal": "40.0000",
         }
     )
     message = _FakeMessage()
@@ -72,6 +71,11 @@ async def test_quick_fuel_prompt_identifies_configured_tanks_and_saved_total():
     assert prompt == "Total usable fuel on board at takeoff (Main, Aux), in US gal:"
     assert kwargs["reply_markup"].inline_keyboard[0][0].text == (
         "Full tanks — 53 gal (saved capacity)"
+    )
+    assert all(
+        "Use last" not in button.text
+        for row in kwargs["reply_markup"].inline_keyboard
+        for button in row
     )
 
 
@@ -93,6 +97,159 @@ async def test_empty_cg_and_moment_are_derived_from_the_entered_aircraft_record(
         _FakeMessage("155158.104"), moment_state, user
     )
     assert D(moment_state.data["basic_empty_cg_in"]) == D("79.13")
+
+
+async def test_total_usable_fuel_is_explicitly_confirmed_against_tank_sum():
+    user = SimpleNamespace(language="en")
+    route_state = _FakeState(
+        {
+            "stations": [
+                {
+                    "name": "Main Fuel Tanks",
+                    "station_type": "FUEL",
+                    "maximum_volume_gal": "40",
+                }
+            ],
+            "_nav_history": [],
+        },
+        AircraftWizard.station_add_prompt,
+    )
+    route_callback = _FakeCallback(_FakeMessage())
+
+    await aircraft_wizard.stations_done(route_callback, route_state, user)
+
+    assert route_state.current_state == AircraftWizard.total_usable_fuel
+    assert route_callback.message.answers[-1][0] == "Total usable fuel, US gal:"
+
+    state = _FakeState(
+        {
+            "update_mode": True,
+            "total_usable_fuel_gal": "53.0000",
+            "stations": [
+                {
+                    "name": "Main Fuel Tanks",
+                    "station_type": "FUEL",
+                    "maximum_volume_gal": "40.0000",
+                },
+                {
+                    "name": "Aux Fuel Tanks",
+                    "station_type": "FUEL",
+                    "maximum_volume_gal": "13.0000",
+                },
+            ],
+            "envelope_rows": [],
+            "_nav_history": [],
+        },
+        AircraftWizard.total_usable_fuel,
+    )
+    prompt_message = _FakeMessage()
+
+    await aircraft_wizard.render_total_usable_fuel(prompt_message, state, user)
+
+    prompt, kwargs = prompt_message.answers[-1]
+    assert prompt == "Total usable fuel, US gal:\n\nCurrent: 53 gal"
+    assert kwargs["reply_markup"].inline_keyboard[0][0].text == "✅ Keep Current"
+
+    mismatch_message = _FakeMessage()
+    await aircraft_wizard._accept_total_usable_fuel(
+        mismatch_message, state, user, D("52")
+    )
+    assert state.current_state == AircraftWizard.total_usable_fuel
+    assert "Entered: 52 gal. Tank sum: 53 gal." in mismatch_message.answers[-1][0]
+
+    accepted_message = _FakeMessage()
+    await aircraft_wizard._accept_total_usable_fuel(
+        accepted_message, state, user, D("53.0000")
+    )
+    assert state.data["total_usable_fuel_gal"] == "53"
+    assert state.current_state == AircraftWizard.envelope_rows
+
+
+async def test_advanced_pilot_surfaces_never_expose_database_decimal_scale():
+    user = SimpleNamespace(language="en")
+    review_state = _FakeState(
+        {
+            "loads": {
+                "front": "320.0000",
+                "rear": "130.0000",
+                "baggage": "20.0000",
+            },
+            "load_arms": {"front": "89.0000"},
+            "non_fuel_station_names": {
+                "front": "Front Seats",
+                "rear": "Rear Seats",
+                "baggage": "Baggage Area",
+            },
+            "fuel": {
+                "main": {
+                    "starting_gal": "40.0000",
+                    "enroute_burn_gal": "30.0000",
+                },
+                "aux": {
+                    "starting_gal": "13.0000",
+                    "enroute_burn_gal": "13.0000",
+                },
+            },
+            "fuel_station_names": {
+                "main": "Main Fuel Tanks",
+                "aux": "Aux Fuel Tanks",
+            },
+        }
+    )
+    review_message = _FakeMessage()
+
+    await flight_calculation._show_flight_review(
+        review_message, review_state, user
+    )
+
+    review = review_message.answers[-1][0]
+    assert ".0000" not in review
+    assert "Front Seats: 320 lb @ 89 in" in review
+    assert "Main Fuel Tanks: start 40 gal, enroute burn 30 gal" in review
+    assert "Aux Fuel Tanks: start 13 gal, enroute burn 13 gal" in review
+
+    prompt_state = _FakeState(
+        {
+            "non_fuel_station_ids": ["pilot"],
+            "non_fuel_station_names": {"pilot": "Pilot Seat"},
+            "non_fuel_station_types": {"pilot": "CUSTOM"},
+            "non_fuel_station_adjustable": {"pilot": True},
+            "non_fuel_station_min_arms": {"pilot": "85.0000"},
+            "non_fuel_station_max_arms": {"pilot": "91.5000"},
+            "last_load_values": {},
+            "last_load_arms": {},
+        }
+    )
+    prompt_message = _FakeMessage()
+
+    await flight_calculation._render_load_prompt(
+        prompt_message, prompt_state, user, 0, show_back=False
+    )
+
+    prompt = prompt_message.answers[-1][0]
+    assert ".0000" not in prompt
+    assert "Allowed ARM: 85–91.5 in" in prompt
+
+    quick_state = _FakeState(
+        {
+            "tail_number": "N100AA",
+            "has_front": True,
+            "has_rear": True,
+            "has_baggage": True,
+            "front_lb": "320.0000",
+            "rear_lb": "130.0000",
+            "baggage_lb": "20.0000",
+            "total_fuel_gal": "53.0000",
+        }
+    )
+    quick_message = _FakeMessage()
+
+    await quick_calculate._show_confirmation(quick_message, quick_state, user)
+
+    quick_review = quick_message.answers[-1][0]
+    assert ".0000" not in quick_review
+    assert "Front seats: 320 lb" in quick_review
+    assert "Usable fuel: 53 gal" in quick_review
 
 
 async def test_edit_station_arm_returns_to_station_hub_state():
@@ -145,6 +302,13 @@ def test_flight_snapshot_remains_structured_json():
 def test_history_summary_handles_legacy_opaque_snapshot():
     calc = SimpleNamespace(result_snapshot_json=json.dumps("CalculationResult(...)"))
     assert _history_summary(calc) == "legacy result — details unavailable"
+
+    scaled = SimpleNamespace(
+        result_snapshot_json=json.dumps(
+            {"total_weight_lb": "2739.0000", "overall_status": "WITHIN"}
+        )
+    )
+    assert _history_summary(scaled) == "2739 lb -- Within Limits"
 
 
 def test_legacy_custom_station_can_be_converted_to_fuel_without_stale_pound_fields():
@@ -370,7 +534,6 @@ async def test_last_advanced_input_skips_quick_and_malformed_history():
     assert values == {
         "loads": {"front": "340", "cargo": "25"},
         "load_arms": {"cargo": "90"},
-        "fuel_starting": {"left": "20"},
     }
 
 
@@ -499,7 +662,7 @@ async def test_update_skips_unset_maximum_zero_fuel_weight_question():
     await aircraft_wizard._advance_past_max_landing(message, state, user)
 
     assert state.current_state == AircraftWizard.known_useful_load
-    assert any("Known Useful Load" in text for text, _ in message.answers)
+    assert any("Known useful load, lb (optional):" in text for text, _ in message.answers)
     assert all("Zero Fuel Weight" not in text for text, _ in message.answers)
 
 

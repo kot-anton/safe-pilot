@@ -39,10 +39,10 @@ STRINGS: dict[str, dict[str, str]] = {
     "menu_cancel": {"en": "Cancel", "ru": "Отмена"},
     "btn_back": {"en": "« Back", "ru": "« Назад"},
     "btn_skip": {"en": "Skip", "ru": "Пропустить"},
-    "btn_keep": {"en": "↩️ Keep current", "ru": "↩️ Оставить текущее"},
+    "btn_keep": {"en": "✅ Keep Current", "ru": "✅ Оставить текущее"},
     "btn_keep_cg_moment": {
-        "en": "↩️ Keep current CG / moment",
-        "ru": "↩️ Оставить текущие CG / момент",
+        "en": "✅ Keep Current CG / Moment",
+        "ru": "✅ Оставить текущие CG / момент",
     },
     "btn_confirm": {"en": "✅ Confirm", "ru": "✅ Подтвердить"},
     "btn_edit": {"en": "✏️ Edit", "ru": "✏️ Изменить"},
@@ -121,43 +121,37 @@ STRINGS: dict[str, dict[str, str]] = {
     "ask_manufacturer": {"en": "Manufacturer (optional):", "ru": "Производитель (необязательно):"},
     "ask_model": {"en": "Model:", "ru": "Модель:"},
     "ask_empty_weight": {
-        "en": "Basic Empty Weight, in pounds:",
-        "ru": "Базовый вес пустого ВС (Basic Empty Weight), в фунтах:",
+        "en": "Basic empty weight, lb:",
+        "ru": "Базовый вес пустого ВС, фунт:",
     },
     "ask_cg_or_moment": {
         "en": "Which Basic Empty value is listed in the aircraft records: CG or moment?",
         "ru": "Что указано в документах для базового пустого ВС: центровка (CG) или момент?",
     },
-    "ask_empty_cg": {"en": "Basic Empty CG, in inches:", "ru": "Центровка пустого ВС (CG), в дюймах:"},
+    "ask_empty_cg": {"en": "Basic empty CG, in:", "ru": "CG пустого ВС, дюйм:"},
     "ask_empty_moment": {
-        "en": "Basic Empty Moment, in pound-inches:",
-        "ru": "Момент пустого ВС, в фунто-дюймах:",
+        "en": "Basic empty moment, lb-in:",
+        "ru": "Момент пустого ВС, фунт-дюйм:",
     },
     "ask_max_ramp_weight": {
-        "en": "Maximum Ramp Weight, in pounds (optional, Skip if not published):",
-        "ru": "Максимальный вес на рулении (Ramp Weight), в фунтах (необязательно):",
+        "en": "Max ramp weight, lb (optional):",
+        "ru": "Макс. вес на перроне, фунт (необязательно):",
     },
     "ask_max_takeoff_weight": {
-        "en": "Maximum Takeoff Weight, in pounds (required):",
-        "ru": "Максимальный взлётный вес, в фунтах (обязательно):",
+        "en": "Max takeoff weight, lb:",
+        "ru": "Макс. взлётный вес, фунт:",
     },
     "ask_max_landing_weight": {
-        "en": "Maximum Landing Weight, in pounds (optional):",
-        "ru": "Максимальный посадочный вес, в фунтах (необязательно):",
+        "en": "Max landing weight, lb (optional):",
+        "ru": "Макс. посадочный вес, фунт (необязательно):",
     },
     "ask_max_zfw": {
-        "en": (
-            "Published Maximum Zero Fuel Weight (MZFW), in pounds. Enter this only if the "
-            "current POH/AFM or supplement explicitly publishes an MZFW; otherwise tap Skip:"
-        ),
-        "ru": (
-            "Опубликованный максимальный вес без топлива (MZFW), в фунтах. Вводите только "
-            "если MZFW прямо указан в актуальном РЛЭ/AFM или дополнении; иначе нажмите «Пропустить»:"
-        ),
+        "en": "Max zero-fuel weight (MZFW), lb (optional—only if published):",
+        "ru": "Макс. вес без топлива (MZFW), фунт (только если опубликован):",
     },
     "ask_known_useful_load": {
-        "en": "Known Useful Load, in pounds (optional, consistency check only):",
-        "ru": "Известная полезная нагрузка, в фунтах (необязательно, только для проверки):",
+        "en": "Known useful load, lb (optional):",
+        "ru": "Известная полезная нагрузка, фунт (необязательно):",
     },
     "useful_load_ok": {
         "en": "Useful load check: entered value matches the calculated useful load.",
@@ -168,6 +162,20 @@ STRINGS: dict[str, dict[str, str]] = {
         "ru": "Настроим станции (места, багаж, топливные баки). Добавить станцию?",
     },
     "stations_added": {"en": "Added so far:", "ru": "Уже добавлены:"},
+    "ask_total_usable_fuel": {
+        "en": "Total usable fuel, US gal:",
+        "ru": "Общий полезный объём топлива, US гал:",
+    },
+    "fuel_total_mismatch": {
+        "en": (
+            "Fuel total does not match the configured tanks. Entered: {entered}. "
+            "Tank sum: {configured}. Correct the tank capacities or enter the matching total."
+        ),
+        "ru": (
+            "Общий объём не совпадает с настроенными баками. Введено: {entered}. "
+            "Сумма баков: {configured}. Исправьте ёмкости баков или введите совпадающий итог."
+        ),
+    },
     "ask_remove_station": {
         "en": "Which station do you want to remove?",
         "ru": "Какую станцию удалить?",
@@ -242,8 +250,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "ru": "Настраиваем временный/арендованный самолёт в быстром режиме.",
     },
     "current_value_hint": {
-        "en": "current: {value} — send a new value or keep the current one",
-        "ru": "текущее значение: {value} — отправьте новое или оставьте текущее",
+        "en": "Current: {value}",
+        "ru": "Текущее: {value}",
     },
     "suggested_station_name": {
         "en": "Or use the suggested name below.",
@@ -371,10 +379,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "ru": "Изменения самолёта сохранены. Предыдущие расчёты не изменены.",
     },
     "my_aircraft_header": {"en": "Your aircraft:", "ru": "Ваши ВС:"},
-    "result_footer": {
-        "en": "Based on the saved aircraft profile. Verify against current aircraft records.",
-        "ru": "На основе сохранённого профиля ВС. Сверьте с актуальной документацией ВС.",
-    },
     "select_aircraft_prompt": {"en": "Select an aircraft:", "ru": "Выберите ВС:"},
     "aircraft_selected": {"en": "Active aircraft set.", "ru": "Активное ВС установлено."},
     "aircraft_profile_invalid": {
@@ -484,12 +488,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": (
             "Planned fuel burn from {station}, in US gal:\n"
             "Available at takeoff: {available}\n"
-            "Skip = do not evaluate landing."
         ),
         "ru": (
             "Плановый расход из бака {station}, в US гал:\n"
             "Доступно на взлёте: {available}\n"
-            "Пропустить = не оценивать посадку."
         ),
     },
     "review_flight_inputs": {"en": "Please confirm your inputs:", "ru": "Подтвердите введённые данные:"},

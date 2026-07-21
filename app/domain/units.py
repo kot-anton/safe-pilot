@@ -27,3 +27,19 @@ def to_decimal(value) -> Decimal:
     if isinstance(value, Decimal):
         return value
     return Decimal(str(value))
+
+
+def compact_decimal(
+    value: Decimal | str, *, decimal_places: int | None = None
+) -> str:
+    """Render a decimal without scientific notation or insignificant trailing zeros.
+
+    ``decimal_places`` bounds display precision while still removing a resulting ``.0``.
+    """
+    decimal = to_decimal(value)
+    if decimal_places is not None:
+        decimal = decimal.quantize(Decimal("1").scaleb(-decimal_places))
+    text = format(decimal, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return "0" if text in {"-0", ""} else text
