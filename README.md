@@ -156,7 +156,7 @@ Run tests:
 pytest -q
 ```
 
-Current review build: **94 tests passing**.
+Current review build: **101 tests passing**.
 
 ## Docker
 

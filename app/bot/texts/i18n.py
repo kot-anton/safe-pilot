@@ -146,8 +146,14 @@ STRINGS: dict[str, dict[str, str]] = {
         "ru": "Максимальный посадочный вес, в фунтах (необязательно):",
     },
     "ask_max_zfw": {
-        "en": "Maximum Zero Fuel Weight, in pounds (optional):",
-        "ru": "Максимальный вес без топлива (ZFW), в фунтах (необязательно):",
+        "en": (
+            "Published Maximum Zero Fuel Weight (MZFW), in pounds. Enter this only if the "
+            "current POH/AFM or supplement explicitly publishes an MZFW; otherwise tap Skip:"
+        ),
+        "ru": (
+            "Опубликованный максимальный вес без топлива (MZFW), в фунтах. Вводите только "
+            "если MZFW прямо указан в актуальном РЛЭ/AFM или дополнении; иначе нажмите «Пропустить»:"
+        ),
     },
     "ask_known_useful_load": {
         "en": "Known Useful Load, in pounds (optional, consistency check only):",
@@ -318,7 +324,33 @@ STRINGS: dict[str, dict[str, str]] = {
             "«Изменить ВС»."
         ),
     },
-    "review_aircraft_summary": {"en": "Please review the aircraft profile:", "ru": "Проверьте профиль ВС:"},
+    "review_aircraft_summary": {"en": "✈️ AIRCRAFT PROFILE — REVIEW", "ru": "✈️ ПРОВЕРКА ПРОФИЛЯ ВС"},
+    "profile_nickname": {"en": "Nickname: {value}", "ru": "Позывной: {value}"},
+    "profile_manufacturer": {"en": "Manufacturer: {value}", "ru": "Производитель: {value}"},
+    "profile_empty_aircraft": {"en": "EMPTY AIRCRAFT", "ru": "ПУСТОЙ САМОЛЁТ"},
+    "profile_empty_weight": {"en": "Weight: {value}", "ru": "Вес: {value}"},
+    "profile_empty_cg": {"en": "CG: {value}", "ru": "CG: {value}"},
+    "profile_empty_moment": {"en": "Moment: {value}", "ru": "Момент: {value}"},
+    "profile_weight_limits": {"en": "WEIGHT LIMITS", "ru": "ОГРАНИЧЕНИЯ ВЕСА"},
+    "profile_limit_ramp": {"en": "Ramp: {value}", "ru": "На перроне: {value}"},
+    "profile_limit_takeoff": {"en": "Takeoff: {value}", "ru": "Взлёт: {value}"},
+    "profile_limit_landing": {"en": "Landing: {value}", "ru": "Посадка: {value}"},
+    "profile_limit_mzfw": {"en": "MZFW: {value}", "ru": "MZFW: {value}"},
+    "profile_load_stations": {"en": "LOAD STATIONS ({count})", "ru": "СТАНЦИИ ЗАГРУЗКИ ({count})"},
+    "profile_fuel_tanks": {"en": "FUEL TANKS ({count})", "ru": "ТОПЛИВНЫЕ БАКИ ({count})"},
+    "profile_arm_fixed": {"en": "ARM {value}", "ru": "ARM {value}"},
+    "profile_arm_adjustable": {
+        "en": "ARM {minimum}–{maximum} (default {default})",
+        "ru": "ARM {minimum}–{maximum} (по умолчанию {default})",
+    },
+    "profile_station_max_load": {"en": "Maximum load: {value}", "ru": "Максимальная нагрузка: {value}"},
+    "profile_tank_usable": {"en": "Usable: {value}", "ru": "Полезный объём: {value}"},
+    "profile_tank_density": {"en": "Density: {value}", "ru": "Плотность: {value}"},
+    "profile_cg_envelope": {"en": "CG ENVELOPE ({count} POINTS)", "ru": "ДИАПАЗОН CG ({count} ТОЧКИ)"},
+    "profile_cg_envelope_missing": {
+        "en": "⚠️ CG ENVELOPE NOT SAVED — CG WILL NOT BE EVALUATED",
+        "ru": "⚠️ ДИАПАЗОН CG НЕ СОХРАНЁН — CG НЕ БУДЕТ ОЦЕНИВАТЬСЯ",
+    },
     "aircraft_saved": {"en": "Aircraft profile saved.", "ru": "Профиль ВС сохранён."},
     "revision_saved": {
         "en": "Aircraft changes saved. Previous calculations are unchanged.",
@@ -365,6 +397,7 @@ STRINGS: dict[str, dict[str, str]] = {
     },
     "btn_use_last": {"en": "Use last: {value} {unit}", "ru": "Как в прошлый раз: {value} {unit}"},
     "btn_full_fuel": {"en": "Full — {value}", "ru": "Полные баки — {value}"},
+    "btn_full_tank": {"en": "Full tank — {value}", "ru": "Полный бак — {value}"},
     "quick_review_front": {"en": "Front seats", "ru": "Передние места"},
     "quick_review_rear": {"en": "Rear seats", "ru": "Задние места"},
     "quick_review_baggage": {"en": "Baggage", "ru": "Багаж"},
@@ -372,6 +405,10 @@ STRINGS: dict[str, dict[str, str]] = {
     "fuel_capacity_exceeded": {
         "en": "Fuel exceeds the combined usable capacity ({capacity}).",
         "ru": "Топливо превышает общий полезный объём баков ({capacity}).",
+    },
+    "fuel_tank_capacity_exceeded": {
+        "en": "Fuel exceeds this tank's usable capacity ({capacity}).",
+        "ru": "Топливо превышает полезный объём этого бака ({capacity}).",
     },
     "fuel_burn_exceeded": {
         "en": "Fuel burn cannot exceed starting fuel ({available}).",
@@ -427,9 +464,102 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "⚠️ Landing condition not evaluated (no landing fuel or enroute burn entered).",
         "ru": "⚠️ Посадочное состояние не оценивалось (не введён расход или остаток топлива на посадку).",
     },
-    "status_within": {"en": "✅ WITHIN ENTERED LIMITS", "ru": "✅ В ПРЕДЕЛАХ ВВЕДЁННЫХ ОГРАНИЧЕНИЙ"},
-    "status_on_limit": {"en": "⚠️ ON LIMIT", "ru": "⚠️ НА ГРАНИЦЕ ОГРАНИЧЕНИЯ"},
-    "status_out_of_limits": {"en": "❌ OUT OF LIMITS", "ru": "❌ ВНЕ ОГРАНИЧЕНИЙ"},
+    "status_within": {"en": "✅ LOADING WITHIN SAVED LIMITS", "ru": "✅ ЗАГРУЗКА В СОХРАНЁННЫХ ПРЕДЕЛАХ"},
+    "status_on_limit": {"en": "⚠️ LOADING ON A SAVED LIMIT", "ru": "⚠️ ЗАГРУЗКА НА ГРАНИЦЕ СОХРАНЁННОГО ОГРАНИЧЕНИЯ"},
+    "status_out_of_limits": {"en": "❌ LOADING OUT OF LIMITS", "ru": "❌ ЗАГРУЗКА ВНЕ ОГРАНИЧЕНИЙ"},
+    "phase_ramp": {"en": "RAMP", "ru": "НА ПЕРРОНЕ"},
+    "phase_takeoff": {"en": "TAKEOFF", "ru": "ВЗЛЁТ"},
+    "phase_landing": {"en": "LANDING", "ru": "ПОСАДКА"},
+    "phase_status_within": {"en": "✅ WITHIN LIMITS", "ru": "✅ В ПРЕДЕЛАХ"},
+    "phase_status_on_limit": {"en": "⚠️ ON A LIMIT", "ru": "⚠️ НА ГРАНИЦЕ"},
+    "phase_status_out_of_limits": {"en": "❌ NOT WITHIN LIMITS", "ru": "❌ ВНЕ ОГРАНИЧЕНИЙ"},
+    "result_weight": {"en": "Weight: {value}", "ru": "Вес: {value}"},
+    "result_max_ramp_weight": {"en": "Maximum ramp weight: {value}", "ru": "Максимальный вес на перроне: {value}"},
+    "result_max_takeoff_weight": {"en": "Maximum takeoff weight: {value}", "ru": "Максимальный взлётный вес: {value}"},
+    "result_max_landing_weight": {"en": "Maximum landing weight: {value}", "ru": "Максимальный посадочный вес: {value}"},
+    "result_weight_below": {"en": "Weight margin: {value} below maximum", "ru": "Запас по весу: {value} до максимума"},
+    "result_weight_over": {"en": "❌ Weight exceeds maximum by {value}", "ru": "❌ Вес превышает максимум на {value}"},
+    "result_weight_on_limit": {"en": "⚠️ Weight is exactly at the maximum", "ru": "⚠️ Вес точно равен максимуму"},
+    "result_weight_limit_not_saved": {
+        "en": "⚠️ No separate {phase} weight limit is saved.",
+        "ru": "⚠️ Отдельное ограничение веса для этапа «{phase}» не сохранено.",
+    },
+    "result_cg": {"en": "CG: {value}", "ru": "Центровка (CG): {value}"},
+    "result_allowed_cg": {
+        "en": "Allowed CG range: {forward}–{aft}",
+        "ru": "Допустимый диапазон CG: {forward}–{aft}",
+    },
+    "result_cg_forward_exceeded": {
+        "en": "❌ CG is {value} forward of the permitted limit.",
+        "ru": "❌ CG находится на {value} впереди допустимого предела.",
+    },
+    "result_cg_aft_exceeded": {
+        "en": "❌ CG is {value} aft of the permitted limit.",
+        "ru": "❌ CG находится на {value} позади допустимого предела.",
+    },
+    "result_cg_on_limit": {"en": "⚠️ CG is exactly on a saved limit.", "ru": "⚠️ CG точно на сохранённой границе."},
+    "result_cg_within": {"en": "✅ CG is within the saved range.", "ru": "✅ CG в сохранённом диапазоне."},
+    "result_cg_envelope_not_defined": {
+        "en": "❌ The saved CG envelope is not defined at this aircraft weight.",
+        "ru": "❌ Сохранённый диапазон CG не определён для этого веса самолёта.",
+    },
+    "result_cg_not_evaluated": {
+        "en": "⚠️ CG not evaluated because no CG envelope is saved.",
+        "ru": "⚠️ CG не оценена: диапазон CG не сохранён.",
+    },
+    "result_station_limit_exceeded": {
+        "en": "❌ {station} exceeds its saved station weight limit.",
+        "ru": "❌ «{station}» превышает сохранённое ограничение веса станции.",
+    },
+    "result_tank_capacity_exceeded": {
+        "en": "❌ {station} exceeds its saved usable tank capacity.",
+        "ru": "❌ «{station}» превышает сохранённый полезный объём бака.",
+    },
+    "overall_result": {"en": "OVERALL RESULT", "ru": "ОБЩИЙ РЕЗУЛЬТАТ"},
+    "overall_within": {
+        "en": "✅ Every evaluated condition is within the saved limits.",
+        "ru": "✅ Все оценённые состояния находятся в сохранённых пределах.",
+    },
+    "overall_on_limit": {
+        "en": "⚠️ At least one evaluated condition is exactly on a saved limit. Verify input precision and aircraft records.",
+        "ru": "⚠️ Хотя бы одно состояние точно на сохранённой границе. Проверьте точность данных и документы самолёта.",
+    },
+    "overall_out_of_limits": {
+        "en": "❌ This loading is not acceptable because:",
+        "ru": "❌ Эта загрузка неприемлема по следующим причинам:",
+    },
+    "overall_reason_weight": {
+        "en": "{phase} weight exceeds its saved limit by {value}.",
+        "ru": "Вес на этапе «{phase}» превышает сохранённый предел на {value}.",
+    },
+    "overall_reason_cg_weight": {
+        "en": "{phase} weight is outside the published weight range of the saved CG envelope.",
+        "ru": "Вес на этапе «{phase}» вне опубликованного диапазона веса сохранённой диаграммы CG.",
+    },
+    "overall_reason_forward_cg": {
+        "en": "{phase} CG is {value} forward of the permitted limit.",
+        "ru": "CG на этапе «{phase}» на {value} впереди допустимого предела.",
+    },
+    "overall_reason_aft_cg": {
+        "en": "{phase} CG is {value} aft of the permitted limit.",
+        "ru": "CG на этапе «{phase}» на {value} позади допустимого предела.",
+    },
+    "overall_reason_station": {
+        "en": "{phase}: {station} exceeds its station weight limit.",
+        "ru": "{phase}: «{station}» превышает ограничение веса станции.",
+    },
+    "overall_reason_tank": {
+        "en": "{phase}: {station} exceeds its usable tank capacity.",
+        "ru": "{phase}: «{station}» превышает полезный объём бака.",
+    },
+    "overall_reason_zfw": {
+        "en": "Zero-fuel weight exceeds its saved limit by {value}.",
+        "ru": "Вес без топлива превышает сохранённый предел на {value}.",
+    },
+    "overall_adjust_and_recalculate": {
+        "en": "Adjust the loading and calculate again.",
+        "ru": "Измените загрузку и выполните расчёт снова.",
+    },
     "status_incomplete": {
         "en": "⚠️ INCOMPLETE — LANDING CONDITION NOT EVALUATED",
         "ru": "⚠️ НЕПОЛНО — ПОСАДОЧНОЕ СОСТОЯНИЕ НЕ ОЦЕНЕНО",

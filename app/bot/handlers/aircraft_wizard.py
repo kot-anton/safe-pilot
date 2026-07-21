@@ -82,6 +82,11 @@ def _show_skip(data: dict, key: str) -> bool:
     return not (_is_update(data) and data.get(key) is not None)
 
 
+def _show_keep(data: dict, key: str) -> bool:
+    """Do not offer a meaningless Keep current button when no value is stored."""
+    return _is_update(data) and data.get(key) is not None
+
+
 def _current_suffix(data: dict, key: str, unit: str = "", lang: str = "en") -> str:
     """Shown only in update mode: reminds the pilot what's on file today, since typing a new
     value is how they edit a field -- Keep current/Skip are for leaving it untouched."""
@@ -154,7 +159,9 @@ async def render_max_ramp_weight(message: Message, state: FSMContext, user: User
     await message.answer(
         t("ask_max_ramp_weight", lang) + _current_suffix(data, "max_ramp_weight_lb", " lb", lang),
         reply_markup=skip_cancel_keyboard(
-            lang, show_keep=_is_update(data), show_skip=_show_skip(data, "max_ramp_weight_lb")
+            lang,
+            show_keep=_show_keep(data, "max_ramp_weight_lb"),
+            show_skip=_show_skip(data, "max_ramp_weight_lb"),
         ),
     )
 
@@ -174,7 +181,9 @@ async def render_max_landing_weight(message: Message, state: FSMContext, user: U
     await message.answer(
         t("ask_max_landing_weight", lang) + _current_suffix(data, "max_landing_weight_lb", " lb", lang),
         reply_markup=skip_cancel_keyboard(
-            lang, show_keep=_is_update(data), show_skip=_show_skip(data, "max_landing_weight_lb")
+            lang,
+            show_keep=_show_keep(data, "max_landing_weight_lb"),
+            show_skip=_show_skip(data, "max_landing_weight_lb"),
         ),
     )
 
@@ -185,7 +194,9 @@ async def render_max_zfw(message: Message, state: FSMContext, user: User) -> Non
     await message.answer(
         t("ask_max_zfw", lang) + _current_suffix(data, "max_zero_fuel_weight_lb", " lb", lang),
         reply_markup=skip_cancel_keyboard(
-            lang, show_keep=_is_update(data), show_skip=_show_skip(data, "max_zero_fuel_weight_lb")
+            lang,
+            show_keep=_show_keep(data, "max_zero_fuel_weight_lb"),
+            show_skip=_show_skip(data, "max_zero_fuel_weight_lb"),
         ),
     )
 
@@ -196,7 +207,9 @@ async def render_known_useful_load(message: Message, state: FSMContext, user: Us
     await message.answer(
         t("ask_known_useful_load", lang) + _current_suffix(data, "known_useful_load_lb", " lb", lang),
         reply_markup=skip_cancel_keyboard(
-            lang, show_keep=_is_update(data), show_skip=_show_skip(data, "known_useful_load_lb")
+            lang,
+            show_keep=_show_keep(data, "known_useful_load_lb"),
+            show_skip=_show_skip(data, "known_useful_load_lb"),
         ),
     )
 
@@ -819,20 +832,38 @@ async def got_max_landing_weight(message: Message, state: FSMContext, user: User
         await message.answer(t("error_generic", lang, detail=str(exc)))
         return
     await state.update_data(max_landing_weight_lb=str(value) if value is not None else None)
-    await goto(message, state, user, AircraftWizard.max_zfw, render_max_zfw)
+    await _advance_past_max_landing(message, state, user)
 
 
 @router.callback_query(AircraftWizard.max_landing_weight, F.data == "wizard:skip")
 async def skip_max_landing_weight(callback: CallbackQuery, state: FSMContext, user: User) -> None:
     await state.update_data(max_landing_weight_lb=None)
-    await goto(callback.message, state, user, AircraftWizard.max_zfw, render_max_zfw)
+    await _advance_past_max_landing(callback.message, state, user)
     await callback.answer()
 
 
 @router.callback_query(AircraftWizard.max_landing_weight, F.data == "wizard:keep")
 async def keep_max_landing_weight(callback: CallbackQuery, state: FSMContext, user: User) -> None:
-    await goto(callback.message, state, user, AircraftWizard.max_zfw, render_max_zfw)
+    await _advance_past_max_landing(callback.message, state, user)
     await callback.answer()
+
+
+async def _advance_past_max_landing(
+    message: Message, state: FSMContext, user: User
+) -> None:
+    data = await state.get_data()
+    # Updating a typical light-GA profile should not stop on an unset structural limit.
+    # Preserve and expose an existing MZFW, while new Advanced Setup still offers the field.
+    if _is_update(data) and data.get("max_zero_fuel_weight_lb") is None:
+        await goto(
+            message,
+            state,
+            user,
+            AircraftWizard.known_useful_load,
+            render_known_useful_load,
+        )
+        return
+    await goto(message, state, user, AircraftWizard.max_zfw, render_max_zfw)
 
 
 @router.message(AircraftWizard.max_zfw, F.text)
@@ -1639,57 +1670,168 @@ def build_draft_from_state_data(data: dict) -> AircraftRevisionDraft:
     )
 
 
+def _summary_fmt(value: str | Decimal, unit: str = "") -> str:
+    """Phone-friendly numeric formatting with grouping and at most one decimal place."""
+    quantized = Decimal(value).quantize(Decimal("0.1"))
+    text = f"{quantized:,.1f}"
+    if text.endswith(".0"):
+        text = text[:-2]
+    return f"{text}{unit}"
+
+
+def _summary_arm(station: dict, lang: str) -> str:
+    default = _summary_fmt(station["default_arm_in"], " in")
+    if not station.get("is_adjustable_arm"):
+        return t("profile_arm_fixed", lang, value=default)
+    minimum = _summary_fmt(station["minimum_arm_in"], " in")
+    maximum = _summary_fmt(station["maximum_arm_in"], " in")
+    return t(
+        "profile_arm_adjustable",
+        lang,
+        minimum=minimum,
+        maximum=maximum,
+        default=default,
+    )
+
+
 def render_summary(data: dict, lang: str) -> str:
     lines = [t("review_aircraft_summary", lang), ""]
-    lines.append(f"Tail number: {data.get('tail_number')}")
+
+    identity = str(data.get("tail_number") or "—")
+    if data.get("model"):
+        identity += f" — {data['model']}"
+    lines.append(identity)
     if data.get("nickname"):
-        lines.append(f"Nickname: {data['nickname']}")
+        lines.append(t("profile_nickname", lang, value=data["nickname"]))
     if data.get("manufacturer"):
-        lines.append(f"Manufacturer: {data['manufacturer']}")
-    lines.append(f"Model: {data.get('model')}")
-    lines.append(f"Basic Empty Weight: {fmt(Decimal(data['basic_empty_weight_lb']), ' lb')}")
-    lines.append(f"Basic Empty CG: {fmt(Decimal(data['basic_empty_cg_in']), ' in')}")
-    lines.append(f"Basic Empty Moment: {fmt(Decimal(data['basic_empty_moment_lb_in']), ' lb-in')}")
-    lines.append(
-        f"Max Ramp Weight: {fmt(Decimal(data['max_ramp_weight_lb']), ' lb') if data.get('max_ramp_weight_lb') else 'not set'}"
-    )
-    lines.append(f"Max Takeoff Weight: {fmt(Decimal(data['max_takeoff_weight_lb']), ' lb')}")
-    lines.append(
-        f"Max Landing Weight: {fmt(Decimal(data['max_landing_weight_lb']), ' lb') if data.get('max_landing_weight_lb') else 'not set'}"
-    )
-    lines.append(
-        f"Max Zero Fuel Weight: {fmt(Decimal(data['max_zero_fuel_weight_lb']), ' lb') if data.get('max_zero_fuel_weight_lb') else 'not set'}"
-    )
-    lines.append(f"Stations ({len(data.get('stations', []))}):")
-    for station in data.get("stations", []):
-        details = [
-            f"ARM {fmt(Decimal(station['default_arm_in']), ' in')}"
+        lines.append(t("profile_manufacturer", lang, value=data["manufacturer"]))
+
+    lines.extend(
+        [
+            "",
+            t("profile_empty_aircraft", lang),
+            t(
+                "profile_empty_weight",
+                lang,
+                value=_summary_fmt(data["basic_empty_weight_lb"], " lb"),
+            ),
+            t(
+                "profile_empty_cg",
+                lang,
+                value=_summary_fmt(data["basic_empty_cg_in"], " in"),
+            ),
+            t(
+                "profile_empty_moment",
+                lang,
+                value=_summary_fmt(data["basic_empty_moment_lb_in"], " lb-in"),
+            ),
+            "",
+            t("profile_weight_limits", lang),
         ]
-        if station.get("maximum_weight_lb") is not None:
-            details.append(
-                f"max {fmt(Decimal(station['maximum_weight_lb']), ' lb')}"
-            )
-        if station.get("maximum_volume_gal") is not None:
-            details.append(
-                f"usable capacity {fmt(Decimal(station['maximum_volume_gal']), ' gal')}"
-            )
-        if station.get("fuel_density_lb_per_gal") is not None:
-            details.append(
-                f"density {fmt(Decimal(station['fuel_density_lb_per_gal']), ' lb/gal')}"
-            )
+    )
+    if data.get("max_ramp_weight_lb"):
         lines.append(
-            f"  - {station['name']} ({station['station_type']}), " + ", ".join(details)
+            t(
+                "profile_limit_ramp",
+                lang,
+                value=_summary_fmt(data["max_ramp_weight_lb"], " lb"),
+            )
         )
+    lines.append(
+        t(
+            "profile_limit_takeoff",
+            lang,
+            value=_summary_fmt(data["max_takeoff_weight_lb"], " lb"),
+        )
+    )
+    if data.get("max_landing_weight_lb"):
+        lines.append(
+            t(
+                "profile_limit_landing",
+                lang,
+                value=_summary_fmt(data["max_landing_weight_lb"], " lb"),
+            )
+        )
+    if data.get("max_zero_fuel_weight_lb"):
+        lines.append(
+            t(
+                "profile_limit_mzfw",
+                lang,
+                value=_summary_fmt(data["max_zero_fuel_weight_lb"], " lb"),
+            )
+        )
+
+    stations = data.get("stations", [])
+    fuel_stations = [
+        station
+        for station in stations
+        if station.get("station_type") == StationType.FUEL.value
+    ]
+    load_stations = [station for station in stations if station not in fuel_stations]
+    station_order = {
+        StationType.FRONT_SEATS.value: 0,
+        StationType.REAR_SEATS.value: 1,
+        StationType.PASSENGER.value: 2,
+        StationType.BAGGAGE.value: 3,
+        StationType.CUSTOM.value: 4,
+    }
+    load_stations = sorted(
+        enumerate(load_stations),
+        key=lambda item: (station_order.get(item[1].get("station_type"), 99), item[0]),
+    )
+
+    if load_stations:
+        lines.extend(["", t("profile_load_stations", lang, count=len(load_stations))])
+        for _, station in load_stations:
+            lines.append(f"• {station['name']} — {_summary_arm(station, lang)}")
+            if station.get("maximum_weight_lb") is not None:
+                lines.append(
+                    "  "
+                    + t(
+                        "profile_station_max_load",
+                        lang,
+                        value=_summary_fmt(station["maximum_weight_lb"], " lb"),
+                    )
+                )
+
+    if fuel_stations:
+        lines.extend(["", t("profile_fuel_tanks", lang, count=len(fuel_stations))])
+        for station in fuel_stations:
+            lines.append(f"• {station['name']} — {_summary_arm(station, lang)}")
+            fuel_details = []
+            if station.get("maximum_volume_gal") is not None:
+                fuel_details.append(
+                    t(
+                        "profile_tank_usable",
+                        lang,
+                        value=_summary_fmt(station["maximum_volume_gal"], " gal"),
+                    )
+                )
+            if station.get("fuel_density_lb_per_gal") is not None:
+                fuel_details.append(
+                    t(
+                        "profile_tank_density",
+                        lang,
+                        value=_summary_fmt(
+                            station["fuel_density_lb_per_gal"], " lb/gal"
+                        ),
+                    )
+                )
+            if fuel_details:
+                lines.append("  " + " • ".join(fuel_details))
+
     envelope_rows = data.get("envelope_rows", [])
+    lines.append("")
     if envelope_rows:
-        lines.append(f"CG envelope rows ({len(envelope_rows)}):")
-        for r in envelope_rows:
+        lines.append(t("profile_cg_envelope", lang, count=len(envelope_rows)))
+        for row in envelope_rows:
             lines.append(
-                f"  - {fmt(Decimal(r['weight_lb']), ' lb')}: "
-                f"{fmt(Decimal(r['forward_cg_limit_in']))}-{fmt(Decimal(r['aft_cg_limit_in']), ' in')}"
+                f"• {_summary_fmt(row['weight_lb'], ' lb')} — "
+                f"{_summary_fmt(row['forward_cg_limit_in'])}–"
+                f"{_summary_fmt(row['aft_cg_limit_in'], ' in')}"
             )
     else:
-        lines.append("CG envelope: none entered -- CG will NOT be evaluated for this aircraft.")
+        lines.append(t("profile_cg_envelope_missing", lang))
     return "\n".join(lines)
 
 
