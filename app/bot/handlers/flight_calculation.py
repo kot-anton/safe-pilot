@@ -19,7 +19,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State
 from aiogram.types import CallbackQuery, Message
 
-from app.bot.handlers._common import InputParseError, fmt, parse_decimal, parse_optional_decimal
+from app.bot.handlers._common import InputParseError, fmt, parse_decimal
 from app.bot.handlers.wizard_nav import pop_checkpoint, push_checkpoint
 from app.bot.keyboards.common import (
     aircraft_list_keyboard,
@@ -33,7 +33,7 @@ from app.bot.texts.i18n import t
 from app.database.models import User
 from app.domain.envelope import LimitStatus
 from app.domain.exceptions import DomainError
-from app.domain.models import CalculationInput, FuelStationInput, LoadItemInput, PhaseResult, StationType
+from app.domain.models import CalculationInput, CalculationResult, FuelStationInput, LoadItemInput, PhaseResult, StationType
 from app.domain.recommendations import Recommendation
 from app.services.aircraft_service import AircraftService
 from app.services.flight_service import FlightService
@@ -148,7 +148,6 @@ async def _render_load_prompt(message: Message, state: FSMContext, user: User, i
 _FUEL_FIELD_STATE: dict[str, tuple[State, str]] = {
     "starting": (FlightWizard.fuel_starting, "ask_fuel_starting"),
     "enroute": (FlightWizard.fuel_enroute, "ask_fuel_enroute"),
-    "minimum": (FlightWizard.fuel_minimum, "ask_min_fuel"),
 }
 
 
@@ -262,8 +261,6 @@ async def _store_fuel_field_and_advance(
     await push_checkpoint(state, ("fuel", index, checkpoint_field))
 
     if checkpoint_field == "enroute":
-        await _render_fuel_prompt(message, state, user, index, "minimum")
-    elif checkpoint_field == "minimum":
         await _ask_next_fuel_starting(message, state, user, index + 1)
 
 
@@ -282,25 +279,6 @@ async def got_fuel_enroute(message: Message, state: FSMContext, user: User) -> N
 async def skip_fuel_enroute(callback: CallbackQuery, state: FSMContext, user: User) -> None:
     await callback.answer()
     await _store_fuel_field_and_advance(callback.message, state, user, "enroute", "enroute_burn_gal", "0")
-
-
-@router.message(FlightWizard.fuel_minimum)
-async def got_fuel_minimum(message: Message, state: FSMContext, user: User) -> None:
-    lang = _lang(user)
-    try:
-        gal = parse_optional_decimal(message.text)
-    except InputParseError as exc:
-        await message.answer(t("error_generic", lang, detail=str(exc)))
-        return
-    await _store_fuel_field_and_advance(
-        message, state, user, "minimum", "min_fuel_gal", str(gal) if gal is not None else ""
-    )
-
-
-@router.callback_query(FlightWizard.fuel_minimum, F.data == "wizard:skip")
-async def skip_fuel_minimum(callback: CallbackQuery, state: FSMContext, user: User) -> None:
-    await callback.answer()
-    await _store_fuel_field_and_advance(callback.message, state, user, "minimum", "min_fuel_gal", "")
 
 
 async def _show_flight_review(message: Message, state: FSMContext, user: User) -> None:
@@ -343,6 +321,36 @@ def _phase_text(phase: PhaseResult, lang: str) -> str:
     return "\n".join(lines)
 
 
+def _phase_violation_detail(phase: PhaseResult) -> list[str]:
+    """Short, specific reasons a phase isn't WITHIN -- so the header can say exactly what's
+    wrong (e.g. "TAKEOFF (forward CG)") instead of a single unqualified overall status."""
+    details = []
+    if phase.weight_status == LimitStatus.OUT_OF_LIMITS:
+        details.append("overweight")
+    elif phase.weight_status == LimitStatus.ON_LIMIT:
+        details.append("at max weight")
+    cg = phase.cg_check
+    if cg is not None and cg.status != LimitStatus.WITHIN:
+        direction = "forward CG" if cg.forward_margin_in < 0 else "aft CG" if cg.aft_margin_in < 0 else "CG on limit"
+        details.append(direction)
+    return details
+
+
+def _status_header(result: CalculationResult, lang: str) -> str:
+    header = t(_STATUS_KEY[result.overall_status], lang)
+    if result.overall_status == LimitStatus.WITHIN:
+        return header
+    phases = [("TAKEOFF", result.takeoff)]
+    if result.ramp.total_weight_lb != result.takeoff.total_weight_lb:
+        phases.insert(0, ("RAMP", result.ramp))
+    if result.landing is not None:
+        phases.append(("LANDING", result.landing))
+    problems = [f"{name} ({', '.join(_phase_violation_detail(phase))})" for name, phase in phases if _phase_violation_detail(phase)]
+    if problems:
+        header += " -- " + "; ".join(problems)
+    return header
+
+
 _STATUS_KEY = {
     LimitStatus.WITHIN: "status_within",
     LimitStatus.ON_LIMIT: "status_on_limit",
@@ -378,20 +386,15 @@ async def flight_review_confirm(
         return
 
     loads = [LoadItemInput(station_id=sid, weight_lb=Decimal(w)) for sid, w in data["loads"].items()]
-    fuel = []
-    min_fuel_gal: dict[str, Decimal] = {}
-    for sid, fdata in data["fuel"].items():
-        fuel.append(
-            FuelStationInput(
-                station_id=sid,
-                starting_gal=Decimal(fdata.get("starting_gal", "0")),
-                taxi_burn_gal=Decimal(fdata.get("taxi_burn_gal", "0")),
-                enroute_burn_gal=Decimal(fdata.get("enroute_burn_gal", "0")),
-            )
+    fuel = [
+        FuelStationInput(
+            station_id=sid,
+            starting_gal=Decimal(fdata.get("starting_gal", "0")),
+            taxi_burn_gal=Decimal(fdata.get("taxi_burn_gal", "0")),
+            enroute_burn_gal=Decimal(fdata.get("enroute_burn_gal", "0")),
         )
-        min_val = fdata.get("min_fuel_gal")
-        if min_val:
-            min_fuel_gal[sid] = Decimal(min_val)
+        for sid, fdata in data["fuel"].items()
+    ]
 
     calc_input = CalculationInput(loads=loads, fuel=fuel)
 
@@ -413,7 +416,7 @@ async def flight_review_confirm(
     # The overall status always reflects the actual current/takeoff (and landing, if
     # evaluated) result -- "landing not evaluated" is noted separately below, it must never
     # replace or hide a real WITHIN/ON_LIMIT/OUT_OF_LIMITS finding with a fake "incomplete".
-    lines = [t(_STATUS_KEY[result.overall_status], lang), ""]
+    lines = [_status_header(result, lang), ""]
     lines.append(f"{profile.tail_number} (rev. {profile.revision_number})")
     lines.append("")
     if profile.envelope is None:
@@ -435,14 +438,15 @@ async def flight_review_confirm(
         lines.append("")
     lines.append(t("result_footer", lang))
 
-    await callback.message.answer("\n".join(lines))
-
-    if result.overall_status != LimitStatus.WITHIN:
-        recs = flight_service.recommend(profile, calc_input, min_fuel_gal=min_fuel_gal)
-        await callback.message.answer(_recommendation_text(recs, lang))
-
     await state.clear()
-    await callback.message.answer(t("main_menu", lang), reply_markup=main_menu_keyboard(lang))
+
+    if result.overall_status == LimitStatus.WITHIN:
+        await callback.message.answer("\n".join(lines), reply_markup=main_menu_keyboard(lang))
+    else:
+        await callback.message.answer("\n".join(lines))
+        recs = flight_service.recommend(profile, calc_input)
+        await callback.message.answer(_recommendation_text(recs, lang), reply_markup=main_menu_keyboard(lang))
+
     await callback.answer()
 
 

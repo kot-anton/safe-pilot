@@ -24,10 +24,9 @@ class AircraftWizard(StatesGroup):
     station_min_arm = State()
     station_max_arm = State()
     station_fuel_max_volume = State()
+    station_edit_arm = State()
+    station_edit_fuel_volume = State()
 
     envelope_rows = State()
-
-    source_doc_name = State()
-    source_doc_date = State()
 
     review = State()

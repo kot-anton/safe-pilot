@@ -21,7 +21,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "Main menu:",
         "ru": "Главное меню:",
     },
-    "menu_my_aircraft": {"en": "My Aircraft", "ru": "Мои ВС"},
+    "menu_my_aircraft": {"en": "My Aircrafts", "ru": "Мои ВС"},
     "menu_add_aircraft": {"en": "Add Aircraft", "ru": "Добавить ВС"},
     "menu_select_aircraft": {"en": "🛩 Change Aircraft", "ru": "🛩 Сменить ВС"},
     "menu_update_aircraft": {"en": "Edit Aircraft", "ru": "Изменить ВС"},
@@ -111,16 +111,8 @@ STRINGS: dict[str, dict[str, str]] = {
     "ask_station_min_arm": {"en": "Minimum ARM, in inches:", "ru": "Минимальное плечо, в дюймах:"},
     "ask_station_max_arm": {"en": "Maximum ARM, in inches:", "ru": "Максимальное плечо, в дюймах:"},
     "ask_fuel_max_volume": {
-        "en": "Maximum fuel volume for this tank, in US gallons:",
-        "ru": "Максимальный объём топлива в этом баке, в US галлонах:",
-    },
-    "ask_source_doc_name": {
-        "en": "Source document name (optional, e.g. \"W&B report #4\"):",
-        "ru": "Название исходного документа (необязательно):",
-    },
-    "ask_source_doc_date": {
-        "en": "Source document date, YYYY-MM-DD (optional):",
-        "ru": "Дата исходного документа, ГГГГ-ММ-ДД (необязательно):",
+        "en": "Maximum fuel volume for this tank, in US gal:",
+        "ru": "Максимальный объём топлива в этом баке, в US гал:",
     },
     "review_aircraft_summary": {"en": "Please review the aircraft profile:", "ru": "Проверьте профиль ВС:"},
     "aircraft_saved": {"en": "Aircraft profile saved.", "ru": "Профиль ВС сохранён."},
@@ -128,7 +120,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "New aircraft revision saved. Historical data and past calculations are unaffected.",
         "ru": "Сохранена новая ревизия ВС. Исторические данные и прошлые расчёты не изменены.",
     },
-    "my_aircraft_header": {"en": "Your aircraft:", "ru": "Ваши ВС:"},
+    "my_aircraft_header": {"en": "Your aircrafts:", "ru": "Ваши ВС:"},
     "result_footer": {
         "en": "Based on the saved aircraft profile. Verify against current aircraft records.",
         "ru": "На основе сохранённого профиля ВС. Сверьте с актуальной документацией ВС.",
@@ -140,10 +132,6 @@ STRINGS: dict[str, dict[str, str]] = {
     "ask_fuel_enroute": {
         "en": "Planned fuel burn from {station}, in US gal (Skip = landing not evaluated):",
         "ru": "Плановый расход из {station}, US гал (Пропустить = посадка не оценивается):",
-    },
-    "ask_min_fuel": {
-        "en": "Minimum required fuel in {station}, in US gal (Skip = no minimum applied):",
-        "ru": "Минимально необходимое топливо в {station}, US гал (Пропустить = минимум не задан):",
     },
     "review_flight_inputs": {"en": "Please confirm your inputs:", "ru": "Подтвердите введённые данные:"},
     "calculation_running": {"en": "Calculating...", "ru": "Выполняется расчёт..."},
@@ -160,8 +148,16 @@ STRINGS: dict[str, dict[str, str]] = {
     },
     "recommendations_header": {"en": "Suggested adjustments:", "ru": "Возможные варианты корректировки:"},
     "no_recommendations": {
-        "en": "No mathematically valid adjustment was found within the configured limits.",
-        "ru": "Не найдено математически допустимой корректировки в рамках заданных ограничений.",
+        "en": (
+            "No single fuel, baggage, or load-move adjustment brings every phase within limits "
+            "at once. A different loading arrangement (who sits where, how fuel is split) may "
+            "still work, but isn't something this solver searches for automatically."
+        ),
+        "ru": (
+            "Ни одна корректировка топлива, багажа или груза не приводит все фазы полёта в "
+            "пределы одновременно. Другая схема загрузки (кто где сидит, как разлито топливо) "
+            "может сработать, но автоматически не подбирается."
+        ),
     },
     "history_empty": {"en": "No calculations recorded yet.", "ru": "Расчётов пока нет."},
     "help_text": {
