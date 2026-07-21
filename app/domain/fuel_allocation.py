@@ -13,6 +13,7 @@ from enum import Enum
 
 from app.domain.envelope import CGCheckResult, CGEnvelope, EPSILON
 from app.domain.exceptions import InvalidInputError
+from app.domain.units import compact_decimal
 
 
 class FuelInputMode(str, Enum):
@@ -121,7 +122,8 @@ def _validate_group(tanks: list[FuelTankSpec], total_gal: Decimal) -> Decimal:
     capacity = total_capacity_gal(tanks)
     if total_gal > capacity:
         raise InvalidInputError(
-            f"Total fuel ({total_gal} gal) exceeds combined usable capacity ({capacity} gal)"
+            f"Total fuel ({compact_decimal(total_gal)} gal) exceeds combined usable capacity "
+            f"({compact_decimal(capacity)} gal)"
         )
     return next(iter(densities))
 

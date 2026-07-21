@@ -170,9 +170,7 @@ def _inline_callbacks(keyboard):
 
 def test_calculation_shortcuts_do_not_offer_literal_zero_buttons():
     quick_load = _step_keyboard("en", last_value="180.0000", unit="lb")
-    quick_fuel = _fuel_keyboard(
-        "en", full_gal=Decimal("53.0000"), last_value="53.0000"
-    )
+    quick_fuel = _fuel_keyboard("en", full_gal=Decimal("53.0000"))
     advanced_load = _load_keyboard(
         "en",
         last_value="180.0000",
@@ -180,9 +178,7 @@ def test_calculation_shortcuts_do_not_offer_literal_zero_buttons():
         adjustable=False,
         show_back=False,
     )
-    advanced_fuel = _fuel_start_keyboard(
-        "en", capacity=Decimal("20"), last_value="12.0000"
-    )
+    advanced_fuel = _fuel_start_keyboard("en", capacity=Decimal("20"))
 
     for keyboard in (quick_load, quick_fuel, advanced_load, advanced_fuel):
         assert all(
@@ -195,11 +191,16 @@ def test_calculation_shortcuts_do_not_offer_literal_zero_buttons():
     assert "quick:full" in _inline_callbacks(quick_fuel)
     assert "flight:use_last_load" in _inline_callbacks(advanced_load)
     assert "flight:full_fuel" in _inline_callbacks(advanced_fuel)
-    assert "flight:use_last_fuel" in _inline_callbacks(advanced_fuel)
+    assert "quick:use_last" not in _inline_callbacks(quick_fuel)
+    assert "flight:use_last_fuel" not in _inline_callbacks(advanced_fuel)
     assert quick_load.inline_keyboard[0][0].text == "Use last: 180 lb"
     assert "Full tanks — 53 gal (saved capacity)" == quick_fuel.inline_keyboard[0][0].text
-    assert quick_fuel.inline_keyboard[1][0].text == "Use last: 53 gal"
-    assert advanced_fuel.inline_keyboard[1][0].text == "Use last: 12 gal"
+    assert all(
+        "Use last" not in button.text
+        for keyboard in (quick_fuel, advanced_fuel)
+        for row in keyboard.inline_keyboard
+        for button in row
+    )
 
 
 def test_new_user_language_follows_supported_telegram_locale():

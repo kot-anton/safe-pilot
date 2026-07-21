@@ -5,7 +5,7 @@ import datetime
 import re
 from decimal import Decimal, InvalidOperation
 
-from app.domain.units import to_decimal
+from app.domain.units import compact_decimal, to_decimal
 
 
 class InputParseError(Exception):
@@ -22,7 +22,8 @@ def parse_decimal(text: str, *, allow_negative: bool = False) -> Decimal:
         raise InputParseError("number must be finite")
     if not allow_negative and value < 0:
         raise InputParseError("value cannot be negative")
-    return value
+    # Keep wizard and history values canonical so ``40.0000`` cannot leak into UI text.
+    return to_decimal(compact_decimal(value))
 
 
 def parse_optional_decimal(text: str) -> Decimal | None:
@@ -58,15 +59,6 @@ def fmt(value: Decimal | None, unit: str = "") -> str:
     if text.endswith(".0"):
         text = text[:-2]
     return f"{text}{unit}"
-
-
-def compact_decimal(value: Decimal | str) -> str:
-    """Preserve entered precision while removing insignificant trailing decimal zeros."""
-    decimal = value if isinstance(value, Decimal) else Decimal(value)
-    text = format(decimal, "f")
-    if "." in text:
-        text = text.rstrip("0").rstrip(".")
-    return "0" if text in {"-0", ""} else text
 
 
 def short_tank_label(name: str) -> str:

@@ -59,7 +59,7 @@ def test_add_fuel_recommendation_flags_full_tank_target():
         tank_capacity_gal=D("40"),
     )
     assert "full" in rec.describe().lower()
-    assert "40.0 gal" in rec.describe()
+    assert "40 gal" in rec.describe()
 
 
 def test_add_fuel_recommendation_states_target_level_when_not_full():
@@ -73,7 +73,7 @@ def test_add_fuel_recommendation_states_target_level_when_not_full():
         tank_capacity_gal=D("40"),
     )
     assert "full" not in rec.describe().lower()
-    assert "Target level: 30.0 gal" in rec.describe()
+    assert "Target level: 30 gal" in rec.describe()
 
 
 def test_recommendation_reduces_baggage_for_overweight():

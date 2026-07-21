@@ -93,7 +93,7 @@ class FlightService:
     ):
         """Same storage as the full calculator (FlightCalculation is engine-agnostic), used
         by the quick 4-question flow. `quick_input` is a plain dict of front/rear/baggage/fuel
-        values -- kept simple so "Use last" lookups can read it back without engine coupling."""
+        values, kept engine-independent for history and replay."""
         return await self.repo.save_calculation(
             user_id=user_id,
             aircraft_id=aircraft_id,

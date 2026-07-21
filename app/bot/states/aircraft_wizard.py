@@ -33,6 +33,7 @@ class AircraftWizard(StatesGroup):
     station_edit_fuel_volume = State()
     station_edit_fuel_density = State()
 
+    total_usable_fuel = State()
     envelope_rows = State()
 
     review = State()

@@ -16,7 +16,7 @@ from app.domain.calculator import calculate
 from app.domain.envelope import LimitStatus
 from app.domain.exceptions import DomainError
 from app.domain.models import AircraftProfile, CalculationInput, LoadItemInput, StationType
-from app.domain.units import lb_to_kg
+from app.domain.units import compact_decimal, lb_to_kg
 
 FUEL_STEP_GAL = Decimal("0.1")
 LOAD_STEP_LB = Decimal("1")
@@ -55,51 +55,60 @@ class Recommendation:
     resulting_station_weight_lb: Decimal | None = None
 
     def describe(self) -> str:
+        def display(value: Decimal) -> str:
+            return compact_decimal(value, decimal_places=1)
+
         if self.kind == RecommendationKind.REDUCE_FUEL:
             text = (
-                f"Reduce fuel in {self.station_name} by {self.delta_gal:.1f} US gal "
-                f"({self.delta_lb:.1f} lb)."
+                f"Reduce fuel in {self.station_name} by {display(self.delta_gal)} US gal "
+                f"({display(self.delta_lb)} lb)."
             )
             if self.resulting_gal is not None:
-                text += f" Target level: {self.resulting_gal:.1f} gal."
+                text += f" Target level: {display(self.resulting_gal)} gal."
             return text
         if self.kind == RecommendationKind.ADD_FUEL:
             text = (
-                f"Add fuel to {self.station_name}: +{self.delta_gal:.1f} US gal "
-                f"(+{self.delta_lb:.1f} lb)."
+                f"Add fuel to {self.station_name}: +{display(self.delta_gal)} US gal "
+                f"(+{display(self.delta_lb)} lb)."
             )
             if self.resulting_gal is not None:
                 if (
                     self.tank_capacity_gal is not None
                     and self.resulting_gal >= self.tank_capacity_gal
                 ):
-                    text += f" Target level: fill to full ({self.resulting_gal:.1f} gal)."
+                    text += (
+                        f" Target level: fill to full ({display(self.resulting_gal)} gal)."
+                    )
                 else:
-                    text += f" Target level: {self.resulting_gal:.1f} gal."
+                    text += f" Target level: {display(self.resulting_gal)} gal."
             return text
         if self.kind == RecommendationKind.REDUCE_BAGGAGE:
             kg = lb_to_kg(self.delta_lb)
             return (
-                f"Remove {self.delta_lb:.1f} lb ({kg:.1f} kg) from {self.station_name}."
+                f"Remove {display(self.delta_lb)} lb ({display(kg)} kg) from "
+                f"{self.station_name}."
             )
         if self.kind == RecommendationKind.ADD_BAGGAGE:
             kg = lb_to_kg(self.delta_lb)
             text = (
-                f"Add {self.delta_lb:.1f} lb ({kg:.1f} kg) of permitted, secured load "
+                f"Add {display(self.delta_lb)} lb ({display(kg)} kg) of permitted, secured load "
                 f"to {self.station_name}."
             )
             if self.resulting_station_weight_lb is not None:
-                text += f" Target compartment load: {self.resulting_station_weight_lb:.1f} lb."
+                text += (
+                    " Target compartment load: "
+                    f"{display(self.resulting_station_weight_lb)} lb."
+                )
             return text
         if self.kind == RecommendationKind.MOVE_LOAD:
             kg = lb_to_kg(self.delta_lb)
             return (
-                f"Move {self.delta_lb:.1f} lb ({kg:.1f} kg) from {self.station_name} "
+                f"Move {display(self.delta_lb)} lb ({display(kg)} kg) from {self.station_name} "
                 f"to {self.target_station_name}."
             )
         if self.kind == RecommendationKind.SHIFT_FUEL:
             return (
-                f"Transfer {self.delta_gal:.1f} US gal of fuel from {self.station_name} "
+                f"Transfer {display(self.delta_gal)} US gal of fuel from {self.station_name} "
                 f"to {self.target_station_name} (total fuel unchanged)."
             )
         return "Adjustment."

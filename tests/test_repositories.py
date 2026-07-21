@@ -9,7 +9,9 @@ from app.repositories.aircraft_repository import AircraftRepository
 from app.repositories.flight_repository import FlightRepository
 from app.services.aircraft_service import AircraftRevisionDraft, EnvelopeRowDraft, StationDraft
 from app.services.aircraft_service import AircraftService
-from app.domain.models import StationType
+from app.domain.envelope import LimitStatus
+from app.domain.models import CalculationInput, FuelStationInput, LoadItemInput, StationType
+from app.services.flight_service import FlightService
 
 
 def _draft() -> AircraftRevisionDraft:
@@ -192,3 +194,108 @@ async def test_persistence_after_application_restart(tmp_path):
         assert aircraft_list[0].tail_number == "N555EE"
         assert aircraft_list[0].nickname == "Skylane"
     await engine2.dispose()
+
+
+async def test_archive_create_calculate_edit_and_recalculate_lifecycle(session_factory):
+    """Exercise the complete aircraft replacement and immutable-edit calculation lifecycle."""
+    factory, _ = session_factory
+    async with factory() as session:
+        aircraft_service = AircraftService(AircraftRepository(session))
+        flight_service = FlightService(FlightRepository(session))
+        user = await aircraft_service.get_or_create_user(telegram_user_id=777)
+
+        old_aircraft = await aircraft_service.create_aircraft(
+            user.id, "N777OLD", "Old Aircraft", None, None, _draft()
+        )
+        await aircraft_service.archive_aircraft(old_aircraft)
+        await aircraft_service.select_aircraft(user, None)
+        await session.commit()
+        assert await aircraft_service.list_aircraft(user.id) == []
+
+        aircraft = await aircraft_service.create_aircraft(
+            user.id, "N777NEW", "Test Aircraft", None, None, _draft()
+        )
+        await session.commit()
+        assert user.selected_aircraft_id == aircraft.id
+
+        first_revision = await aircraft_service.get_revision_for_user(
+            user.id, aircraft.active_revision_id
+        )
+        first_profile = flight_service.build_profile(first_revision, aircraft)
+        front_id = next(
+            station.station_id
+            for station in first_profile.stations
+            if station.station_type == StationType.FRONT_SEATS
+        )
+        fuel_id = first_profile.fuel_stations[0].station_id
+        calculation_input = CalculationInput(
+            loads=[LoadItemInput(station_id=front_id, weight_lb=D("500"))],
+            fuel=[FuelStationInput(station_id=fuel_id, starting_gal=D("40"))],
+        )
+        first_result = flight_service.run_calculation(
+            first_profile, calculation_input
+        )
+        assert first_result.overall_status == LimitStatus.WITHIN
+        await flight_service.persist_calculation(
+            user_id=user.id,
+            aircraft_id=aircraft.id,
+            aircraft_revision_id=aircraft.active_revision_id,
+            calc_input=calculation_input,
+            result=first_result,
+        )
+
+        updated_draft = dataclasses.replace(
+            _draft(),
+            basic_empty_weight_lb=D("1510"),
+            basic_empty_moment_lb_in=D("58890"),
+            basic_empty_cg_in=D("39"),
+        )
+        updated_revision = await aircraft_service.update_aircraft(
+            aircraft, updated_draft
+        )
+        await session.commit()
+        assert updated_revision.revision_number == 2
+
+        refreshed_revision = await aircraft_service.get_revision_for_user(
+            user.id, aircraft.active_revision_id
+        )
+        updated_profile = flight_service.build_profile(
+            refreshed_revision, aircraft
+        )
+        updated_front_id = next(
+            station.station_id
+            for station in updated_profile.stations
+            if station.station_type == StationType.FRONT_SEATS
+        )
+        updated_fuel_id = updated_profile.fuel_stations[0].station_id
+        updated_input = CalculationInput(
+            loads=[
+                LoadItemInput(station_id=updated_front_id, weight_lb=D("500"))
+            ],
+            fuel=[
+                FuelStationInput(station_id=updated_fuel_id, starting_gal=D("40"))
+            ],
+        )
+        updated_result = flight_service.run_calculation(
+            updated_profile, updated_input
+        )
+        assert updated_result.overall_status == LimitStatus.WITHIN
+        assert (
+            updated_result.takeoff.total_weight_lb
+            == first_result.takeoff.total_weight_lb + D("10")
+        )
+        await flight_service.persist_calculation(
+            user_id=user.id,
+            aircraft_id=aircraft.id,
+            aircraft_revision_id=aircraft.active_revision_id,
+            calc_input=updated_input,
+            result=updated_result,
+        )
+        await session.commit()
+
+        history = await flight_service.list_history(user.id, aircraft.id)
+        assert len(history) == 2
+        assert {item.aircraft_revision_id for item in history} == {
+            first_revision.id,
+            updated_revision.id,
+        }

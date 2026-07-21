@@ -85,7 +85,7 @@ async def _last_quick_input(
         if not isinstance(snapshot, dict):
             continue
         values = {}
-        for key in ("front_lb", "rear_lb", "baggage_lb", "total_fuel_gal"):
+        for key in ("front_lb", "rear_lb", "baggage_lb"):
             try:
                 value = Decimal(str(snapshot.get(key)))
             except (ArithmeticError, TypeError, ValueError):
@@ -121,9 +121,7 @@ def _step_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _fuel_keyboard(
-    lang: str, *, full_gal: Decimal, last_value: str | None
-) -> InlineKeyboardMarkup:
+def _fuel_keyboard(lang: str, *, full_gal: Decimal) -> InlineKeyboardMarkup:
     rows = [
         [
             InlineKeyboardButton(
@@ -132,20 +130,6 @@ def _fuel_keyboard(
             )
         ],
     ]
-    if last_value is not None and Decimal(last_value) <= full_gal:
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=t(
-                        "btn_use_last",
-                        lang,
-                        value=compact_decimal(last_value),
-                        unit="gal",
-                    ),
-                    callback_data="quick:use_last",
-                )
-            ]
-        )
     rows.append(
         [
             InlineKeyboardButton(
@@ -381,8 +365,7 @@ async def _begin(
         last_front_lb=(last or {}).get("front_lb"),
         last_rear_lb=(last or {}).get("rear_lb"),
         last_baggage_lb=(last or {}).get("baggage_lb"),
-        last_total_fuel_gal=(last or {}).get("total_fuel_gal"),
-        full_fuel_gal=str(full_fuel),
+        full_fuel_gal=compact_decimal(full_fuel),
         fuel_tank_labels=[
             short_tank_label(station.name) for station in profile.fuel_stations
         ],
@@ -543,7 +526,6 @@ async def _ask_fuel(message: Message, state: FSMContext, user: User) -> None:
         reply_markup=_fuel_keyboard(
             _lang(user),
             full_gal=Decimal(data["full_fuel_gal"]),
-            last_value=data.get("last_total_fuel_gal"),
         ),
     )
 
@@ -571,20 +553,6 @@ async def full_fuel(callback: CallbackQuery, state: FSMContext, user: User) -> N
 async def zero_fuel(callback: CallbackQuery, state: FSMContext, user: User) -> None:
     await callback.answer()
     await _finish_fuel(callback.message, state, user, Decimal("0"))
-
-
-@router.callback_query(QuickCalcWizard.fuel, F.data == "quick:use_last")
-async def use_last_fuel(callback: CallbackQuery, state: FSMContext, user: User) -> None:
-    data = await state.get_data()
-    await callback.answer()
-    if data.get("last_total_fuel_gal") is None:
-        return
-    await _finish_fuel(
-        callback.message,
-        state,
-        user,
-        Decimal(data["last_total_fuel_gal"]),
-    )
 
 
 async def _finish_fuel(
@@ -639,7 +607,6 @@ async def quick_edit(
             "front_lb": data.get("front_lb", "0"),
             "rear_lb": data.get("rear_lb", "0"),
             "baggage_lb": data.get("baggage_lb", "0"),
-            "total_fuel_gal": data.get("total_fuel_gal", "0"),
         },
     )
 
@@ -797,7 +764,6 @@ def _result_text(
     elif result.fuel_range_status == FuelRangeStatus.EXACT_SPLIT_REQUIRED:
         lines.append("Some possible tank splits are within limits and some are not.")
 
-    lines.extend(["", t("result_footer", lang)])
     return "\n".join(lines)
 
 

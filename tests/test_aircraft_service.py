@@ -41,10 +41,11 @@ def test_useful_load_matches_within_tolerance_no_warning():
 
 
 def test_useful_load_consistency_warning_when_mismatched():
-    draft = _draft(D("1000"))  # off by 50 lb, exceeds 5 lb tolerance
+    draft = _draft(D("1000.0000"))  # off by 50 lb, exceeds 5 lb tolerance
     warning = useful_load_warning(draft)
     assert warning is not None
     assert "1050" in warning
+    assert ".0000" not in warning
 
 
 def test_no_useful_load_provided_no_warning():
