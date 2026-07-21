@@ -5,6 +5,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
 
+from app.bot.commands import configure_bot_ui
 from app.bot.handlers import aircraft_update, aircraft_wizard, flight_calculation, menu, quick_calculate
 from app.bot.middlewares.db_session import DbSessionMiddleware
 from app.config import settings
@@ -26,12 +27,13 @@ async def main() -> None:
 
     dispatcher.include_router(menu.router)
     dispatcher.include_router(quick_calculate.router)
-    dispatcher.include_router(aircraft_wizard.router)
     dispatcher.include_router(aircraft_update.router)
     dispatcher.include_router(flight_calculation.router)
+    dispatcher.include_router(aircraft_wizard.router)
 
     logger.info("Starting Weight & Balance bot (long polling)")
     await bot.delete_webhook(drop_pending_updates=True)
+    await configure_bot_ui(bot)
     await dispatcher.start_polling(bot)
 
 

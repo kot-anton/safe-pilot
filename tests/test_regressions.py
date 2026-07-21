@@ -3,8 +3,11 @@ from decimal import Decimal as D
 from types import SimpleNamespace
 
 from app.bot.handlers.aircraft_wizard import _apply_station_type_change, got_station_edit_arm
+from app.bot.handlers import flight_calculation
 from app.bot.handlers.flight_calculation import _history_summary, _parse_load_entry
 from app.bot.states.aircraft_wizard import AircraftWizard
+from app.bot.states.flight_wizard import FlightWizard
+from app.domain.models import AircraftProfile, StationProfile, StationType
 from app.domain.models import CalculationInput, FuelStationInput, LoadItemInput
 from app.services.flight_service import _snapshot
 
@@ -122,3 +125,79 @@ def test_adjustable_load_requires_and_parses_actual_arm():
     )
     assert zero_weight == 0
     assert zero_arm == D("88")
+
+
+async def test_advanced_flow_with_only_fuel_stations_starts_at_first_tank(monkeypatch):
+    """Regression: this branch called the next-fuel helper without its required index."""
+    profile = AircraftProfile(
+        tail_number="N100AA",
+        revision_number=1,
+        basic_empty_weight_lb=D("1000"),
+        basic_empty_moment_lb_in=D("40000"),
+        max_takeoff_weight_lb=D("1600"),
+        stations=[
+            StationProfile(
+                station_id="fuel",
+                name="Main Fuel",
+                station_type=StationType.FUEL,
+                default_arm_in=D("48"),
+                maximum_volume_gal=D("40"),
+                fuel_density_lb_per_gal=D("6"),
+            )
+        ],
+        envelope=None,
+    )
+    aircraft = SimpleNamespace(id=1)
+
+    async def fake_load(*_args):
+        return aircraft, profile
+
+    monkeypatch.setattr(flight_calculation, "_load_profile_and_aircraft", fake_load)
+    state = _FakeState({})
+    message = _FakeMessage()
+    user = SimpleNamespace(id=7, language="en")
+
+    await flight_calculation._begin_for_aircraft(
+        message, state, user, aircraft_service=None, aircraft_id=1
+    )
+
+    assert state.current_state == FlightWizard.fuel_starting
+    assert state.data["fuel_index"] == 0
+    assert any("usable capacity 40 gal" in text for text, _ in message.answers)
+
+
+async def test_advanced_flow_rejects_fuel_above_tank_capacity_immediately():
+    state = _FakeState(
+        {
+            "fuel_station_ids": ["fuel"],
+            "fuel_station_capacities": {"fuel": "40"},
+            "fuel_index": 0,
+            "fuel": {},
+        },
+        FlightWizard.fuel_starting,
+    )
+    message = _FakeMessage("41")
+    user = SimpleNamespace(language="en")
+
+    await flight_calculation.got_fuel_starting(message, state, user)
+
+    assert state.data["fuel"] == {}
+    assert any("combined usable capacity (40 gal)" in text for text, _ in message.answers)
+
+
+async def test_advanced_flow_rejects_burn_above_starting_fuel_immediately():
+    state = _FakeState(
+        {
+            "fuel_station_ids": ["fuel"],
+            "fuel_index": 0,
+            "fuel": {"fuel": {"starting_gal": "20", "taxi_burn_gal": "0"}},
+        },
+        FlightWizard.fuel_enroute,
+    )
+    message = _FakeMessage("21")
+    user = SimpleNamespace(language="en")
+
+    await flight_calculation.got_fuel_enroute(message, state, user)
+
+    assert "enroute_burn_gal" not in state.data["fuel"]["fuel"]
+    assert any("cannot exceed starting fuel (20 gal)" in text for text, _ in message.answers)

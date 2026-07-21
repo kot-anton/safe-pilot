@@ -17,7 +17,13 @@ from decimal import Decimal, InvalidOperation
 from aiogram import F, Router
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    ReplyKeyboardRemove,
+)
 
 from app.bot.handlers._common import (
     InputParseError,
@@ -28,7 +34,7 @@ from app.bot.handlers._common import (
 )
 from app.bot.handlers.wizard_nav import goto, go_back
 from app.bot.keyboards.common import (
-    STATION_TYPE_DEFAULT_NAMES,
+    STATION_TYPE_TEXT_KEYS,
     arm_fixed_adjustable_keyboard,
     cancel_only_keyboard,
     cg_or_moment_keyboard,
@@ -76,7 +82,7 @@ def _show_skip(data: dict, key: str) -> bool:
     return not (_is_update(data) and data.get(key) is not None)
 
 
-def _current_suffix(data: dict, key: str, unit: str = "") -> str:
+def _current_suffix(data: dict, key: str, unit: str = "", lang: str = "en") -> str:
     """Shown only in update mode: reminds the pilot what's on file today, since typing a new
     value is how they edit a field -- Keep current/Skip are for leaving it untouched."""
     if not _is_update(data):
@@ -88,7 +94,7 @@ def _current_suffix(data: dict, key: str, unit: str = "") -> str:
         display = fmt(Decimal(value), unit)
     except (InvalidOperation, ValueError):
         display = f"{value}{unit}"
-    return f"\n\n(current: {display} -- send a new value to change it, or tap Keep current to leave it as-is)"
+    return f"\n\n({t('current_value_hint', lang, value=display)})"
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +124,7 @@ async def render_empty_weight(message: Message, state: FSMContext, user: User) -
     lang = _lang(user)
     data = await state.get_data()
     await message.answer(
-        t("ask_empty_weight", lang) + _current_suffix(data, "basic_empty_weight_lb", " lb"),
+        t("ask_empty_weight", lang) + _current_suffix(data, "basic_empty_weight_lb", " lb", lang),
         reply_markup=keep_cancel_keyboard(lang, show_keep=_is_update(data)),
     )
 
@@ -126,7 +132,9 @@ async def render_empty_weight(message: Message, state: FSMContext, user: User) -
 async def render_cg_or_moment_choice(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     data = await state.get_data()
-    suffix = _current_suffix(data, "basic_empty_cg_in", " in") or _current_suffix(data, "basic_empty_moment_lb_in", " lb-in")
+    suffix = _current_suffix(data, "basic_empty_cg_in", " in", lang) or _current_suffix(
+        data, "basic_empty_moment_lb_in", " lb-in", lang
+    )
     await message.answer(t("ask_cg_or_moment", lang) + suffix, reply_markup=cg_or_moment_keyboard(lang, show_keep=_is_update(data)))
 
 
@@ -144,7 +152,7 @@ async def render_max_ramp_weight(message: Message, state: FSMContext, user: User
     lang = _lang(user)
     data = await state.get_data()
     await message.answer(
-        t("ask_max_ramp_weight", lang) + _current_suffix(data, "max_ramp_weight_lb", " lb"),
+        t("ask_max_ramp_weight", lang) + _current_suffix(data, "max_ramp_weight_lb", " lb", lang),
         reply_markup=skip_cancel_keyboard(
             lang, show_keep=_is_update(data), show_skip=_show_skip(data, "max_ramp_weight_lb")
         ),
@@ -155,7 +163,7 @@ async def render_max_takeoff_weight(message: Message, state: FSMContext, user: U
     lang = _lang(user)
     data = await state.get_data()
     await message.answer(
-        t("ask_max_takeoff_weight", lang) + _current_suffix(data, "max_takeoff_weight_lb", " lb"),
+        t("ask_max_takeoff_weight", lang) + _current_suffix(data, "max_takeoff_weight_lb", " lb", lang),
         reply_markup=keep_cancel_keyboard(lang, show_keep=_is_update(data)),
     )
 
@@ -164,7 +172,7 @@ async def render_max_landing_weight(message: Message, state: FSMContext, user: U
     lang = _lang(user)
     data = await state.get_data()
     await message.answer(
-        t("ask_max_landing_weight", lang) + _current_suffix(data, "max_landing_weight_lb", " lb"),
+        t("ask_max_landing_weight", lang) + _current_suffix(data, "max_landing_weight_lb", " lb", lang),
         reply_markup=skip_cancel_keyboard(
             lang, show_keep=_is_update(data), show_skip=_show_skip(data, "max_landing_weight_lb")
         ),
@@ -175,7 +183,7 @@ async def render_max_zfw(message: Message, state: FSMContext, user: User) -> Non
     lang = _lang(user)
     data = await state.get_data()
     await message.answer(
-        t("ask_max_zfw", lang) + _current_suffix(data, "max_zero_fuel_weight_lb", " lb"),
+        t("ask_max_zfw", lang) + _current_suffix(data, "max_zero_fuel_weight_lb", " lb", lang),
         reply_markup=skip_cancel_keyboard(
             lang, show_keep=_is_update(data), show_skip=_show_skip(data, "max_zero_fuel_weight_lb")
         ),
@@ -186,7 +194,7 @@ async def render_known_useful_load(message: Message, state: FSMContext, user: Us
     lang = _lang(user)
     data = await state.get_data()
     await message.answer(
-        t("ask_known_useful_load", lang) + _current_suffix(data, "known_useful_load_lb", " lb"),
+        t("ask_known_useful_load", lang) + _current_suffix(data, "known_useful_load_lb", " lb", lang),
         reply_markup=skip_cancel_keyboard(
             lang, show_keep=_is_update(data), show_skip=_show_skip(data, "known_useful_load_lb")
         ),
@@ -204,34 +212,48 @@ async def render_station_add_prompt(message: Message, state: FSMContext, user: U
         ]
     ]
     if stations:
-        rows.append([InlineKeyboardButton(text="✏️ Edit a station", callback_data="wizard:edit_prompt")])
-        rows.append([InlineKeyboardButton(text="🗑 Remove a station", callback_data="wizard:remove_prompt")])
+        rows.append(
+            [InlineKeyboardButton(text=t("btn_edit_station", lang), callback_data="wizard:edit_prompt")]
+        )
+        rows.append(
+            [InlineKeyboardButton(text=t("btn_remove_station", lang), callback_data="wizard:remove_prompt")]
+        )
     text = t("ask_add_station", lang)
     if stations:
-        text += "\n\nAdded so far:\n" + "\n".join(f"- {s['name']}" for s in stations)
+        text += f"\n\n{t('stations_added', lang)}\n" + "\n".join(
+            f"- {s['name']}" for s in stations
+        )
     await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
 
 async def render_remove_station_prompt(message: Message, state: FSMContext, user: User) -> None:
+    lang = _lang(user)
     data = await state.get_data()
     stations = data.get("stations", [])
     rows = [
         [InlineKeyboardButton(text=f"🗑 {s['name']}", callback_data=f"wizard:remove_at:{i}")]
         for i, s in enumerate(stations)
     ]
-    rows.append([InlineKeyboardButton(text="◀ Back", callback_data="wizard:remove_cancel")])
-    await message.answer("Which station do you want to remove?", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    rows.append([InlineKeyboardButton(text=t("btn_back", lang), callback_data="wizard:remove_cancel")])
+    await message.answer(
+        t("ask_remove_station", lang),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
 
 
 async def render_edit_station_prompt(message: Message, state: FSMContext, user: User) -> None:
+    lang = _lang(user)
     data = await state.get_data()
     stations = data.get("stations", [])
     rows = [
         [InlineKeyboardButton(text=f"✏️ {s['name']}", callback_data=f"wizard:edit_at:{i}")]
         for i, s in enumerate(stations)
     ]
-    rows.append([InlineKeyboardButton(text="◀ Back", callback_data="wizard:edit_cancel")])
-    await message.answer("Which station do you want to edit?", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    rows.append([InlineKeyboardButton(text=t("btn_back", lang), callback_data="wizard:edit_cancel")])
+    await message.answer(
+        t("ask_edit_station", lang),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
 
 
 async def render_station_edit_arm(message: Message, state: FSMContext, user: User) -> None:
@@ -239,10 +261,14 @@ async def render_station_edit_arm(message: Message, state: FSMContext, user: Use
     station = data["stations"][data["editing_station_index"]]
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="↩️ Keep current ARM", callback_data="wizard:keep")],
+            [InlineKeyboardButton(text=t("btn_keep", _lang(user)), callback_data="wizard:keep")],
             [
-                InlineKeyboardButton(text="✏️ Rename", callback_data="wizard:edit_station_name"),
-                InlineKeyboardButton(text="🔁 Change type", callback_data="wizard:edit_station_type"),
+                InlineKeyboardButton(
+                    text=t("btn_rename", _lang(user)), callback_data="wizard:edit_station_name"
+                ),
+                InlineKeyboardButton(
+                    text=t("btn_change_type", _lang(user)), callback_data="wizard:edit_station_type"
+                ),
             ],
             [
                 InlineKeyboardButton(
@@ -252,7 +278,12 @@ async def render_station_edit_arm(message: Message, state: FSMContext, user: Use
         ]
     )
     await message.answer(
-        f"ARM for {station['name']}, in inches (currently {fmt(Decimal(station['default_arm_in']))}):",
+        t(
+            "ask_edit_station_arm",
+            _lang(user),
+            station=station["name"],
+            current=fmt(Decimal(station["default_arm_in"])),
+        ),
         reply_markup=keyboard,
     )
 
@@ -261,7 +292,7 @@ async def render_station_edit_name(message: Message, state: FSMContext, user: Us
     data = await state.get_data()
     station = data["stations"][data["editing_station_index"]]
     await message.answer(
-        f"New name for station \"{station['name']}\":",
+        t("ask_edit_station_name", _lang(user), station=station["name"]),
         reply_markup=keep_cancel_keyboard(_lang(user), show_keep=True, show_back=False),
     )
 
@@ -269,8 +300,14 @@ async def render_station_edit_name(message: Message, state: FSMContext, user: Us
 async def render_station_edit_type(message: Message, state: FSMContext, user: User) -> None:
     data = await state.get_data()
     station = data["stations"][data["editing_station_index"]]
+    station_type = StationTypeEnum(station["station_type"])
     await message.answer(
-        f"Station type for {station['name']} (currently {station['station_type']}):",
+        t(
+            "ask_edit_station_type",
+            _lang(user),
+            station=station["name"],
+            current=t(STATION_TYPE_TEXT_KEYS[station_type], _lang(user)),
+        ),
         reply_markup=station_type_keyboard(_lang(user), show_back=False, show_done=False),
     )
 
@@ -279,10 +316,14 @@ async def render_station_edit_fuel_volume(message: Message, state: FSMContext, u
     data = await state.get_data()
     station = data["stations"][data["editing_station_index"]]
     current = station.get("maximum_volume_gal")
-    current_text = fmt(Decimal(current), " gal") if current is not None else "not set"
+    current_text = fmt(Decimal(current), " gal") if current is not None else t("not_set", _lang(user))
     await message.answer(
-        f"Maximum usable fuel volume for {station['name']}, in US gal "
-        f"(currently {current_text}):",
+        t(
+            "ask_edit_fuel_volume",
+            _lang(user),
+            station=station["name"],
+            current=current_text,
+        ),
         reply_markup=keep_cancel_keyboard(
             _lang(user), show_keep=current is not None, show_back=False
         ),
@@ -298,8 +339,11 @@ async def render_station_type(message: Message, state: FSMContext, user: User) -
     )
 
 
-def _default_station_name(station_type_value: str, stations: list[dict]) -> str:
-    base = STATION_TYPE_DEFAULT_NAMES[StationTypeEnum(station_type_value)]
+def _default_station_name(
+    station_type_value: str, stations: list[dict], lang: str = "en"
+) -> str:
+    station_type = StationTypeEnum(station_type_value)
+    base = t(STATION_TYPE_TEXT_KEYS[station_type], lang)
     count = sum(1 for s in stations if s["station_type"] == station_type_value)
     return base if count == 0 else f"{base} {count + 1}"
 
@@ -307,9 +351,11 @@ def _default_station_name(station_type_value: str, stations: list[dict]) -> str:
 async def render_station_name(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     data = await state.get_data()
-    default_name = _default_station_name(data["current_station_type"], data.get("stations", []))
+    default_name = _default_station_name(
+        data["current_station_type"], data.get("stations", []), lang
+    )
     await message.answer(
-        f"{t('ask_station_name', lang)}\nOr just use the suggested default below.",
+        f"{t('ask_station_name', lang)}\n{t('suggested_station_name', lang)}",
         reply_markup=station_name_keyboard(lang, default_name),
     )
 
@@ -351,7 +397,7 @@ def _fuel_density_keyboard(lang: str, *, show_keep: bool = False) -> InlineKeybo
         ]
     ]
     if show_keep:
-        rows.append([InlineKeyboardButton(text="↩️ Keep current", callback_data="wizard:keep")])
+        rows.append([InlineKeyboardButton(text=t("btn_keep", lang), callback_data="wizard:keep")])
     rows.append([InlineKeyboardButton(text=t("btn_cancel", lang), callback_data="wizard:cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -367,16 +413,21 @@ async def render_station_edit_max_weight(message: Message, state: FSMContext, us
     data = await state.get_data()
     station = data["stations"][data["editing_station_index"]]
     current = station.get("maximum_weight_lb")
-    current_text = fmt(Decimal(current), " lb") if current is not None else "not set"
+    current_text = fmt(Decimal(current), " lb") if current is not None else t("not_set", _lang(user))
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="↩️ Keep current", callback_data="wizard:keep")],
-            [InlineKeyboardButton(text="Clear limit", callback_data="wizard:clear")],
+            [InlineKeyboardButton(text=t("btn_keep", _lang(user)), callback_data="wizard:keep")],
+            [InlineKeyboardButton(text=t("btn_clear_limit", _lang(user)), callback_data="wizard:clear")],
             [InlineKeyboardButton(text=t("btn_cancel", _lang(user)), callback_data="wizard:cancel")],
         ]
     )
     await message.answer(
-        f"Maximum weight for {station['name']}, in lb (currently {current_text}):",
+        t(
+            "ask_edit_station_max_weight",
+            _lang(user),
+            station=station["name"],
+            current=current_text,
+        ),
         reply_markup=keyboard,
     )
 
@@ -385,9 +436,14 @@ async def render_station_edit_fuel_density(message: Message, state: FSMContext, 
     data = await state.get_data()
     station = data["stations"][data["editing_station_index"]]
     current = station.get("fuel_density_lb_per_gal")
-    current_text = fmt(Decimal(current), " lb/gal") if current is not None else "not set"
+    current_text = fmt(Decimal(current), " lb/gal") if current is not None else t("not_set", _lang(user))
     await message.answer(
-        f"Fuel density for {station['name']}, in lb per US gal (currently {current_text}):",
+        t(
+            "ask_edit_fuel_density",
+            _lang(user),
+            station=station["name"],
+            current=current_text,
+        ),
         reply_markup=_fuel_density_keyboard(_lang(user), show_keep=current is not None),
     )
 
@@ -403,27 +459,29 @@ async def render_envelope_rows(message: Message, state: FSMContext, user: User) 
     lang = _lang(user)
     data = await state.get_data()
     rows = data.get("envelope_rows", [])
-    text = (
-        "CG envelope row: weight, forward_limit, aft_limit (one per message).\n"
-        "Example: 2200, 35.0, 47.3\n\n"
-        "Single CG range only (not weight-varying)? Enter it twice, at your min and max weight.\n\n"
-        "At least two rows, increasing weight, then Done. No data yet? Skip below -- CG won't "
-        "be evaluated until you add it via Update Aircraft."
-    )
+    text = t("envelope_prompt", lang)
     if rows:
-        text += "\n\nRows so far:\n" + "\n".join(f"- {_envelope_row_label(r)}" for r in rows)
+        text += f"\n\n{t('envelope_rows_added', lang)}\n" + "\n".join(
+            f"- {_envelope_row_label(r)}" for r in rows
+        )
     await message.answer(text, reply_markup=envelope_keyboard(lang, has_rows=bool(rows)))
 
 
 async def render_remove_envelope_row_prompt(message: Message, state: FSMContext, user: User) -> None:
+    lang = _lang(user)
     data = await state.get_data()
     rows = data.get("envelope_rows", [])
     keyboard_rows = [
         [InlineKeyboardButton(text=f"🗑 {_envelope_row_label(r)}", callback_data=f"wizard:remove_row_at:{i}")]
         for i, r in enumerate(rows)
     ]
-    keyboard_rows.append([InlineKeyboardButton(text="◀ Back", callback_data="wizard:remove_row_cancel")])
-    await message.answer("Which row do you want to remove?", reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_rows))
+    keyboard_rows.append(
+        [InlineKeyboardButton(text=t("btn_back", lang), callback_data="wizard:remove_row_cancel")]
+    )
+    await message.answer(
+        t("ask_remove_envelope_row", lang),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_rows),
+    )
 
 
 async def render_review(message: Message, state: FSMContext, user: User) -> None:
@@ -462,7 +520,7 @@ RENDERERS: dict[str, "callable"] = {
 
 
 async def _cannot_go_back(message: Message, state: FSMContext, user: User) -> None:
-    await message.answer("Already at the first step of this wizard.")
+    await message.answer(t("already_first_step", _lang(user)))
 
 
 @router.callback_query(StateFilter(AircraftWizard), F.data == "wizard:back")
@@ -476,24 +534,24 @@ async def wizard_back(callback: CallbackQuery, state: FSMContext, user: User) ->
 # ---------------------------------------------------------------------------
 
 
-def _setup_mode_keyboard() -> InlineKeyboardMarkup:
+def _setup_mode_keyboard(lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="⚡ Quick Setup (recommended)", callback_data="wizard:quick_setup")],
-            [InlineKeyboardButton(text="🛠 Advanced Setup", callback_data="wizard:advanced_setup")],
+            [InlineKeyboardButton(text=t("btn_quick_setup", lang), callback_data="wizard:quick_setup")],
+            [InlineKeyboardButton(text=t("btn_advanced_setup", lang), callback_data="wizard:advanced_setup")],
         ]
     )
 
 
 @router.message(F.text.in_({t("menu_add_aircraft", "en"), t("menu_add_aircraft", "ru")}))
 async def start_wizard(message: Message, state: FSMContext, user: User) -> None:
+    lang = _lang(user)
     await state.clear()
     await state.update_data(stations=[], envelope_rows=[])
+    await message.answer(t("setup_started", lang), reply_markup=ReplyKeyboardRemove())
     await message.answer(
-        "Quick Setup asks only what's needed for a valid calculation (empty weight/CG, max "
-        "takeoff weight, seats/baggage/fuel, CG envelope). Advanced Setup also covers ramp/"
-        "landing/ZFW weights and a known useful-load consistency check.",
-        reply_markup=_setup_mode_keyboard(),
+        t("setup_intro", lang),
+        reply_markup=_setup_mode_keyboard(lang),
     )
 
 
@@ -511,7 +569,9 @@ async def start_rental_wizard(message: Message, state: FSMContext, user: User) -
     apart later (e.g. for a future auto-archive pass) without a separate flow to maintain."""
     await state.clear()
     await state.update_data(stations=[], envelope_rows=[], is_temporary=True, setup_mode="quick")
-    await message.answer("Setting up a temporary/rental aircraft profile (Quick Setup).")
+    await message.answer(
+        t("rental_setup_started", _lang(user)), reply_markup=ReplyKeyboardRemove()
+    )
     await goto(message, state, user, AircraftWizard.tail_number, render_tail_number, record_history=False)
 
 
@@ -532,11 +592,16 @@ async def wizard_cancel(callback: CallbackQuery, state: FSMContext, user: User) 
 # ---------------------------------------------------------------------------
 
 
-@router.message(AircraftWizard.tail_number)
+@router.message(AircraftWizard.tail_number, F.text)
 async def got_tail_number(message: Message, state: FSMContext, user: User) -> None:
     tail_number = message.text.strip().upper()
     if not tail_number:
         await message.answer(t("error_generic", _lang(user), detail="tail number required"))
+        return
+    if len(tail_number) > 16:
+        await message.answer(
+            t("error_generic", _lang(user), detail="tail number must be 16 characters or fewer")
+        )
         return
     await state.update_data(tail_number=tail_number)
     data = await state.get_data()
@@ -547,9 +612,15 @@ async def got_tail_number(message: Message, state: FSMContext, user: User) -> No
         await goto(message, state, user, AircraftWizard.nickname, render_nickname)
 
 
-@router.message(AircraftWizard.nickname)
+@router.message(AircraftWizard.nickname, F.text)
 async def got_nickname(message: Message, state: FSMContext, user: User) -> None:
-    await state.update_data(nickname=parse_optional_text(message.text))
+    nickname = parse_optional_text(message.text)
+    if nickname is not None and len(nickname) > 64:
+        await message.answer(
+            t("error_generic", _lang(user), detail="nickname must be 64 characters or fewer")
+        )
+        return
+    await state.update_data(nickname=nickname)
     await goto(message, state, user, AircraftWizard.manufacturer, render_manufacturer)
 
 
@@ -560,9 +631,15 @@ async def skip_nickname(callback: CallbackQuery, state: FSMContext, user: User) 
     await callback.answer()
 
 
-@router.message(AircraftWizard.manufacturer)
+@router.message(AircraftWizard.manufacturer, F.text)
 async def got_manufacturer(message: Message, state: FSMContext, user: User) -> None:
-    await state.update_data(manufacturer=parse_optional_text(message.text))
+    manufacturer = parse_optional_text(message.text)
+    if manufacturer is not None and len(manufacturer) > 64:
+        await message.answer(
+            t("error_generic", _lang(user), detail="manufacturer must be 64 characters or fewer")
+        )
+        return
+    await state.update_data(manufacturer=manufacturer)
     await goto(message, state, user, AircraftWizard.model, render_model)
 
 
@@ -573,11 +650,16 @@ async def skip_manufacturer(callback: CallbackQuery, state: FSMContext, user: Us
     await callback.answer()
 
 
-@router.message(AircraftWizard.model)
+@router.message(AircraftWizard.model, F.text)
 async def got_model(message: Message, state: FSMContext, user: User) -> None:
     model = message.text.strip()
     if not model:
         await message.answer(t("error_generic", _lang(user), detail="model required"))
+        return
+    if len(model) > 64:
+        await message.answer(
+            t("error_generic", _lang(user), detail="model must be 64 characters or fewer")
+        )
         return
     await state.update_data(model=model)
     await goto(message, state, user, AircraftWizard.empty_weight, render_empty_weight)
@@ -588,7 +670,7 @@ async def got_model(message: Message, state: FSMContext, user: User) -> None:
 # ---------------------------------------------------------------------------
 
 
-@router.message(AircraftWizard.empty_weight)
+@router.message(AircraftWizard.empty_weight, F.text)
 async def got_empty_weight(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     try:
@@ -640,7 +722,7 @@ async def keep_cg_moment(callback: CallbackQuery, state: FSMContext, user: User)
     await callback.answer()
 
 
-@router.message(AircraftWizard.empty_cg)
+@router.message(AircraftWizard.empty_cg, F.text)
 async def got_empty_cg(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     try:
@@ -655,7 +737,7 @@ async def got_empty_cg(message: Message, state: FSMContext, user: User) -> None:
     await _advance_past_empty_record(message, state, user)
 
 
-@router.message(AircraftWizard.empty_moment)
+@router.message(AircraftWizard.empty_moment, F.text)
 async def got_empty_moment(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     try:
@@ -675,7 +757,7 @@ async def got_empty_moment(message: Message, state: FSMContext, user: User) -> N
 # ---------------------------------------------------------------------------
 
 
-@router.message(AircraftWizard.max_ramp_weight)
+@router.message(AircraftWizard.max_ramp_weight, F.text)
 async def got_max_ramp_weight(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     try:
@@ -700,7 +782,7 @@ async def keep_max_ramp_weight(callback: CallbackQuery, state: FSMContext, user:
     await callback.answer()
 
 
-@router.message(AircraftWizard.max_takeoff_weight)
+@router.message(AircraftWizard.max_takeoff_weight, F.text)
 async def got_max_takeoff_weight(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     try:
@@ -728,7 +810,7 @@ async def _advance_past_max_takeoff(message: Message, state: FSMContext, user: U
         await goto(message, state, user, AircraftWizard.max_landing_weight, render_max_landing_weight)
 
 
-@router.message(AircraftWizard.max_landing_weight)
+@router.message(AircraftWizard.max_landing_weight, F.text)
 async def got_max_landing_weight(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     try:
@@ -753,7 +835,7 @@ async def keep_max_landing_weight(callback: CallbackQuery, state: FSMContext, us
     await callback.answer()
 
 
-@router.message(AircraftWizard.max_zfw)
+@router.message(AircraftWizard.max_zfw, F.text)
 async def got_max_zfw(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     try:
@@ -800,7 +882,7 @@ async def _finish_useful_load(message: Message, state: FSMContext, user: User, v
     await goto(message, state, user, AircraftWizard.station_add_prompt, render_station_add_prompt)
 
 
-@router.message(AircraftWizard.known_useful_load)
+@router.message(AircraftWizard.known_useful_load, F.text)
 async def got_known_useful_load(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     try:
@@ -856,7 +938,7 @@ async def remove_station_at(callback: CallbackQuery, state: FSMContext, user: Us
     if 0 <= index < len(stations):
         removed = stations.pop(index)
         await state.update_data(stations=stations)
-        await callback.answer(f"Removed {removed['name']}.")
+        await callback.answer(t("station_removed", _lang(user), station=removed["name"]))
     else:
         await callback.answer()
     await render_station_add_prompt(callback.message, state, user)
@@ -899,7 +981,7 @@ async def edit_station_name_prompt(
     await render_station_edit_name(callback.message, state, user)
 
 
-@router.message(AircraftWizard.station_edit_name)
+@router.message(AircraftWizard.station_edit_name, F.text)
 async def got_station_edit_name(message: Message, state: FSMContext, user: User) -> None:
     name = message.text.strip()
     if not name:
@@ -918,16 +1000,13 @@ async def got_station_edit_name(message: Message, state: FSMContext, user: User)
     if station["station_type"] != StationType.FUEL.value and (
         "fuel" in words or "tank" in words or "tanks" in words
     ):
-        await message.answer(
-            "That name looks like a fuel tank. Change the station type to Fuel Tank first, "
-            "so the bot records gallons, usable capacity, and density."
-        )
+        await message.answer(t("fuel_like_name_edit_error", _lang(user)))
         return
 
     station["name"] = name
     await state.update_data(stations=stations)
     await state.set_state(AircraftWizard.station_edit_arm)
-    await message.answer("Station name updated.")
+    await message.answer(t("station_name_updated", _lang(user)))
     await render_station_edit_arm(message, state, user)
 
 
@@ -992,7 +1071,7 @@ async def got_station_edit_type(
     station = stations[data["editing_station_index"]]
     _apply_station_type_change(station, new_type)
     await state.update_data(stations=stations)
-    await callback.answer("Station type updated.")
+    await callback.answer(t("station_type_updated", _lang(user)))
     await state.set_state(AircraftWizard.station_edit_arm)
     await render_station_edit_arm(callback.message, state, user)
 
@@ -1006,7 +1085,7 @@ async def _finish_station_edit(message: Message, state: FSMContext, user: User) 
     """
     await state.update_data(editing_station_index=None)
     await state.set_state(AircraftWizard.station_add_prompt)
-    await message.answer("Station updated.")
+    await message.answer(t("station_updated", _lang(user)))
     await render_station_add_prompt(message, state, user)
 
 
@@ -1024,7 +1103,7 @@ async def _advance_past_station_edit_arm(message: Message, state: FSMContext, us
         await _finish_station_edit(message, state, user)
 
 
-@router.message(AircraftWizard.station_edit_arm)
+@router.message(AircraftWizard.station_edit_arm, F.text)
 async def got_station_edit_arm(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     try:
@@ -1058,7 +1137,7 @@ async def keep_station_edit_arm(callback: CallbackQuery, state: FSMContext, user
     await _advance_past_station_edit_arm(callback.message, state, user)
 
 
-@router.message(AircraftWizard.station_edit_max_weight)
+@router.message(AircraftWizard.station_edit_max_weight, F.text)
 async def got_station_edit_max_weight(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     try:
@@ -1098,7 +1177,7 @@ async def _advance_to_station_edit_fuel_density(
     await render_station_edit_fuel_density(message, state, user)
 
 
-@router.message(AircraftWizard.station_edit_fuel_volume)
+@router.message(AircraftWizard.station_edit_fuel_volume, F.text)
 async def got_station_edit_fuel_volume(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     try:
@@ -1131,7 +1210,7 @@ async def _save_station_edit_fuel_density(
     await _finish_station_edit(message, state, user)
 
 
-@router.message(AircraftWizard.station_edit_fuel_density)
+@router.message(AircraftWizard.station_edit_fuel_density, F.text)
 async def got_station_edit_fuel_density(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     try:
@@ -1185,21 +1264,23 @@ async def got_station_type(callback: CallbackQuery, state: FSMContext, user: Use
     await callback.answer()
 
 
-@router.message(AircraftWizard.station_name)
+@router.message(AircraftWizard.station_name, F.text)
 async def got_station_name(message: Message, state: FSMContext, user: User) -> None:
     name = message.text.strip()
     if not name:
         await message.answer(t("error_generic", _lang(user), detail="name required"))
+        return
+    if len(name) > 64:
+        await message.answer(
+            t("error_generic", _lang(user), detail="station name must be 64 characters or fewer")
+        )
         return
     data = await state.get_data()
     words = {word.strip("-_/()[]") for word in name.casefold().split()}
     if data.get("current_station_type") != StationType.FUEL.value and (
         "fuel" in words or "tank" in words or "tanks" in words
     ):
-        await message.answer(
-            "This station name looks like a fuel tank, but its selected type is not FUEL. "
-            "Go back and choose Fuel Tank so the bot records gallons, capacity, and density."
-        )
+        await message.answer(t("fuel_like_name_new_error", _lang(user)))
         return
     await state.update_data(current_station_name=name)
     await goto(message, state, user, AircraftWizard.station_arm, render_station_arm)
@@ -1208,7 +1289,9 @@ async def got_station_name(message: Message, state: FSMContext, user: User) -> N
 @router.callback_query(AircraftWizard.station_name, F.data == "wizard:use_default_name")
 async def use_default_station_name(callback: CallbackQuery, state: FSMContext, user: User) -> None:
     data = await state.get_data()
-    default_name = _default_station_name(data["current_station_type"], data.get("stations", []))
+    default_name = _default_station_name(
+        data["current_station_type"], data.get("stations", []), _lang(user)
+    )
     await state.update_data(current_station_name=default_name)
     await goto(callback.message, state, user, AircraftWizard.station_arm, render_station_arm)
     await callback.answer()
@@ -1219,7 +1302,7 @@ async def use_default_station_name(callback: CallbackQuery, state: FSMContext, u
 _ADJUSTABLE_ARM_ELIGIBLE = {StationType.CUSTOM.value}
 
 
-@router.message(AircraftWizard.station_arm)
+@router.message(AircraftWizard.station_arm, F.text)
 async def got_station_arm(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     try:
@@ -1278,7 +1361,7 @@ async def arm_adjustable(callback: CallbackQuery, state: FSMContext, user: User)
     await callback.answer()
 
 
-@router.message(AircraftWizard.station_min_arm)
+@router.message(AircraftWizard.station_min_arm, F.text)
 async def got_station_min_arm(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     try:
@@ -1290,7 +1373,7 @@ async def got_station_min_arm(message: Message, state: FSMContext, user: User) -
     await goto(message, state, user, AircraftWizard.station_max_arm, render_station_max_arm)
 
 
-@router.message(AircraftWizard.station_max_arm)
+@router.message(AircraftWizard.station_max_arm, F.text)
 async def got_station_max_arm(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     try:
@@ -1313,7 +1396,7 @@ async def got_station_max_arm(message: Message, state: FSMContext, user: User) -
     await _after_arm_configured(message, state, user)
 
 
-@router.message(AircraftWizard.station_max_weight)
+@router.message(AircraftWizard.station_max_weight, F.text)
 async def got_station_max_weight(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     try:
@@ -1332,7 +1415,7 @@ async def skip_station_max_weight(callback: CallbackQuery, state: FSMContext, us
     await _finalize_station(callback.message, state, user, max_weight=None)
 
 
-@router.message(AircraftWizard.station_fuel_max_volume)
+@router.message(AircraftWizard.station_fuel_max_volume, F.text)
 async def got_fuel_max_volume(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     try:
@@ -1362,7 +1445,7 @@ async def _finish_new_fuel_station(
     )
 
 
-@router.message(AircraftWizard.station_fuel_density)
+@router.message(AircraftWizard.station_fuel_density, F.text)
 async def got_fuel_density(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     try:
@@ -1422,7 +1505,7 @@ async def _finalize_station(
     # Fresh hub screen (not goto/history -- the station is now committed, so Back should not
     # be able to re-open a finalized station's fields and re-append a duplicate).
     await state.set_state(AircraftWizard.station_add_prompt)
-    await message.answer(f"Station \"{station['name']}\" added.")
+    await message.answer(t("station_added", _lang(user), station=station["name"]))
     await render_station_add_prompt(message, state, user)
 
 
@@ -1431,7 +1514,7 @@ async def _finalize_station(
 # ---------------------------------------------------------------------------
 
 
-@router.message(AircraftWizard.envelope_rows)
+@router.message(AircraftWizard.envelope_rows, F.text)
 async def got_envelope_row(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     parts = [p.strip() for p in message.text.replace(";", ",").split(",")]
@@ -1472,7 +1555,7 @@ async def remove_row_at(callback: CallbackQuery, state: FSMContext, user: User) 
     if 0 <= index < len(rows):
         rows.pop(index)
         await state.update_data(envelope_rows=rows)
-        await callback.answer("Row removed.")
+        await callback.answer(t("row_removed", _lang(user)))
     else:
         await callback.answer()
     await render_envelope_rows(callback.message, state, user)
@@ -1482,10 +1565,7 @@ async def remove_row_at(callback: CallbackQuery, state: FSMContext, user: User) 
 async def skip_envelope(callback: CallbackQuery, state: FSMContext, user: User) -> None:
     await state.update_data(envelope_rows=[])
     await callback.answer()
-    await callback.message.answer(
-        "⚠️ CG envelope skipped. Calculations for this aircraft will check weight limits only "
-        "-- CG will show as NOT EVALUATED until you add an envelope via Update Aircraft."
-    )
+    await callback.message.answer(t("envelope_skipped", _lang(user)))
     await _advance_past_envelope(callback.message, state, user)
 
 
@@ -1625,7 +1705,7 @@ async def review_confirm(
         if data.get("update_mode"):
             aircraft = await aircraft_service.get_aircraft(user.id, data["aircraft_id"])
             if aircraft is None:
-                await callback.answer("Aircraft not found.", show_alert=True)
+                await callback.answer(t("aircraft_not_found", lang), show_alert=True)
                 await state.clear()
                 return
             await aircraft_service.update_aircraft(aircraft, draft)
@@ -1649,3 +1729,8 @@ async def review_confirm(
     message_key = "revision_saved" if data.get("update_mode") else "aircraft_saved"
     await callback.message.answer(t(message_key, lang), reply_markup=main_menu_keyboard(lang))
     await callback.answer()
+
+
+@router.message(StateFilter(AircraftWizard))
+async def unsupported_aircraft_wizard_message(message: Message, user: User) -> None:
+    await message.answer(t("unsupported_wizard_message", _lang(user)))

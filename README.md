@@ -6,7 +6,12 @@ The bot does **not** search FAA records, download a POH/AFM, use OCR, or use an 
 
 ## Normal workflow
 
-After an aircraft profile is saved, the normal calculation asks only:
+Send `/start` once after opening the bot. Telegram's persistent command menu and the reply
+keyboard both provide access to calculations, aircraft management, history, help, and cancel.
+Use `/menu` at any time to abandon an unfinished wizard and restore the main menu.
+
+Selecting **Calculate** first offers **Takeoff — Quick** or **Takeoff + Landing — Advanced**.
+The quick calculation asks only:
 
 1. Combined front-seat weight, lb
 2. Combined rear-seat weight, lb, when configured
@@ -151,7 +156,7 @@ Run tests:
 pytest -q
 ```
 
-Current review build: **83 tests passing**.
+Current review build: **94 tests passing**.
 
 ## Docker
 

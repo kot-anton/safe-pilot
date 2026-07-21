@@ -23,7 +23,13 @@ def _lang(user: User) -> str:
 
 
 @router.message(Command("start"))
-async def cmd_start(message: Message, user: User, aircraft_service: AircraftService) -> None:
+async def cmd_start(
+    message: Message,
+    state: FSMContext,
+    user: User,
+    aircraft_service: AircraftService,
+) -> None:
+    await state.clear()
     lang = _lang(user)
     await message.answer(t("welcome", lang), parse_mode="Markdown")
 
@@ -38,20 +44,25 @@ async def cmd_start(message: Message, user: User, aircraft_service: AircraftServ
     await message.answer(t("main_menu", lang), reply_markup=main_menu_keyboard(lang))
 
 
+@router.message(Command("aircraft"))
 @router.message(F.text.in_({t("menu_aircraft_submenu", "en"), t("menu_aircraft_submenu", "ru")}))
-async def aircraft_submenu(message: Message, user: User) -> None:
+async def aircraft_submenu(message: Message, state: FSMContext, user: User) -> None:
+    await state.clear()
     lang = _lang(user)
-    await message.answer(t("menu_aircraft_submenu", lang), reply_markup=aircraft_submenu_keyboard(lang))
+    await message.answer(t("aircraft_menu", lang), reply_markup=aircraft_submenu_keyboard(lang))
 
 
 @router.message(F.text.in_({t("menu_more_submenu", "en"), t("menu_more_submenu", "ru")}))
-async def more_submenu(message: Message, user: User) -> None:
+async def more_submenu(message: Message, state: FSMContext, user: User) -> None:
+    await state.clear()
     lang = _lang(user)
-    await message.answer(t("menu_more_submenu", lang), reply_markup=more_submenu_keyboard(lang))
+    await message.answer(t("more_menu", lang), reply_markup=more_submenu_keyboard(lang))
 
 
+@router.message(Command("menu"))
 @router.message(F.text.in_({t("menu_back", "en"), t("menu_back", "ru")}))
-async def back_to_main_menu(message: Message, user: User) -> None:
+async def back_to_main_menu(message: Message, state: FSMContext, user: User) -> None:
+    await state.clear()
     lang = _lang(user)
     await message.answer(t("main_menu", lang), reply_markup=main_menu_keyboard(lang))
 
@@ -66,27 +77,43 @@ async def card_calculate(
     callback: CallbackQuery,
     state: FSMContext,
     user: User,
-    aircraft_service: AircraftService,
-    flight_service: FlightService,
 ) -> None:
-    from app.bot.handlers.quick_calculate import start_quick_calculation
+    from app.bot.handlers.quick_calculate import show_calculation_options
 
     await callback.answer()
-    await start_quick_calculation(
-        callback.message, state, user, aircraft_service, flight_service
-    )
+    await show_calculation_options(callback.message, state, user)
 
 
 @router.callback_query(F.data == "card:change_aircraft")
-async def card_change_aircraft(callback: CallbackQuery, user: User, aircraft_service: AircraftService) -> None:
+async def card_change_aircraft(
+    callback: CallbackQuery,
+    state: FSMContext,
+    user: User,
+    aircraft_service: AircraftService,
+) -> None:
+    await state.clear()
     await callback.answer()
-    await select_aircraft_prompt(callback.message, user, aircraft_service)
+    await _send_select_aircraft_prompt(callback.message, user, aircraft_service)
 
 
 @router.message(Command("help"))
 @router.message(F.text.in_({t("menu_help", "en"), t("menu_help", "ru")}))
 async def cmd_help(message: Message, user: User) -> None:
     await message.answer(t("help_text", _lang(user)))
+
+
+@router.message(Command("history"))
+async def cmd_history(
+    message: Message,
+    state: FSMContext,
+    user: User,
+    flight_service: FlightService,
+    aircraft_service: AircraftService,
+) -> None:
+    # This router is registered first, so /history cannot be mistaken for numeric wizard input.
+    from app.bot.handlers.flight_calculation import calculation_history
+
+    await calculation_history(message, state, user, flight_service, aircraft_service)
 
 
 @router.message(Command("cancel"))
@@ -97,15 +124,19 @@ async def cmd_cancel(message: Message, state: FSMContext, user: User) -> None:
     await message.answer(t("cancelled", lang), reply_markup=main_menu_keyboard(lang))
 
 
-def _aircraft_banner(aircraft: Aircraft, lang: str) -> str:
-    revision = aircraft.active_revision
-    rev_text = f"rev. {revision.revision_number}" if revision else "no revision"
+def _aircraft_banner(aircraft: Aircraft) -> str:
     nickname = f" \"{aircraft.nickname}\"" if aircraft.nickname else ""
-    return f"{aircraft.tail_number}{nickname} -- {aircraft.model} ({rev_text})"
+    return f"{aircraft.tail_number}{nickname} -- {aircraft.model}"
 
 
 @router.message(F.text.in_({t("menu_my_aircraft", "en"), t("menu_my_aircraft", "ru")}))
-async def my_aircraft(message: Message, user: User, aircraft_service: AircraftService) -> None:
+async def my_aircraft(
+    message: Message,
+    state: FSMContext,
+    user: User,
+    aircraft_service: AircraftService,
+) -> None:
+    await state.clear()
     lang = _lang(user)
     aircraft_list = await aircraft_service.list_aircraft(user.id)
     if not aircraft_list:
@@ -114,12 +145,24 @@ async def my_aircraft(message: Message, user: User, aircraft_service: AircraftSe
     lines = [t("my_aircraft_header", lang), ""]
     for a in aircraft_list:
         marker = " ⭐" if user.selected_aircraft_id == a.id else ""
-        lines.append(f"- {_aircraft_banner(a, lang)}{marker}")
+        lines.append(f"- {_aircraft_banner(a)}{marker}")
     await message.answer("\n".join(lines))
 
 
 @router.message(F.text.in_({t("menu_select_aircraft", "en"), t("menu_select_aircraft", "ru")}))
-async def select_aircraft_prompt(message: Message, user: User, aircraft_service: AircraftService) -> None:
+async def select_aircraft_prompt(
+    message: Message,
+    state: FSMContext,
+    user: User,
+    aircraft_service: AircraftService,
+) -> None:
+    await state.clear()
+    await _send_select_aircraft_prompt(message, user, aircraft_service)
+
+
+async def _send_select_aircraft_prompt(
+    message: Message, user: User, aircraft_service: AircraftService
+) -> None:
     lang = _lang(user)
     aircraft_list = await aircraft_service.list_aircraft(user.id)
     if not aircraft_list:
@@ -132,21 +175,32 @@ async def select_aircraft_prompt(message: Message, user: User, aircraft_service:
 
 @router.callback_query(F.data.startswith("select:"))
 async def select_aircraft_chosen(
-    callback: CallbackQuery, user: User, aircraft_service: AircraftService
+    callback: CallbackQuery,
+    state: FSMContext,
+    user: User,
+    aircraft_service: AircraftService,
 ) -> None:
+    await state.clear()
     lang = _lang(user)
     aircraft_id = int(callback.data.split(":")[1])
     aircraft = await aircraft_service.get_aircraft(user.id, aircraft_id)
     if aircraft is None:
-        await callback.answer()
+        await callback.answer(t("aircraft_not_found", lang), show_alert=True)
         return
     await aircraft_service.select_aircraft(user, aircraft.id)
-    await callback.message.edit_text(f"{_aircraft_banner(aircraft, lang)}\n\n{t('aircraft_selected', lang)}")
+    await callback.message.edit_text(f"{_aircraft_banner(aircraft)}\n\n{t('aircraft_selected', lang)}")
     await callback.answer()
+    await callback.message.answer(t("main_menu", lang), reply_markup=main_menu_keyboard(lang))
 
 
 @router.message(F.text.in_({t("menu_archive_aircraft", "en"), t("menu_archive_aircraft", "ru")}))
-async def archive_aircraft_prompt(message: Message, user: User, aircraft_service: AircraftService) -> None:
+async def archive_aircraft_prompt(
+    message: Message,
+    state: FSMContext,
+    user: User,
+    aircraft_service: AircraftService,
+) -> None:
+    await state.clear()
     lang = _lang(user)
     aircraft_list = await aircraft_service.list_aircraft(user.id)
     if not aircraft_list:
@@ -159,15 +213,21 @@ async def archive_aircraft_prompt(message: Message, user: User, aircraft_service
 
 @router.callback_query(F.data.startswith("archive:"))
 async def archive_aircraft_chosen(
-    callback: CallbackQuery, user: User, aircraft_service: AircraftService
+    callback: CallbackQuery,
+    state: FSMContext,
+    user: User,
+    aircraft_service: AircraftService,
 ) -> None:
+    await state.clear()
+    lang = _lang(user)
     aircraft_id = int(callback.data.split(":")[1])
     aircraft = await aircraft_service.get_aircraft(user.id, aircraft_id)
     if aircraft is None:
-        await callback.answer()
+        await callback.answer(t("aircraft_not_found", lang), show_alert=True)
         return
     await aircraft_service.archive_aircraft(aircraft)
     if user.selected_aircraft_id == aircraft.id:
         await aircraft_service.select_aircraft(user, None)
-    await callback.message.edit_text(f"{aircraft.tail_number} archived.")
+    await callback.message.edit_text(t("aircraft_archived", lang, aircraft=aircraft.tail_number))
     await callback.answer()
+    await callback.message.answer(t("main_menu", lang), reply_markup=main_menu_keyboard(lang))

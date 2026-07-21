@@ -18,7 +18,7 @@ from aiogram import F, Router
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 
 from app.bot.handlers._common import InputParseError, fmt, parse_decimal
 from app.bot.handlers.wizard_nav import pop_checkpoint, push_checkpoint
@@ -62,9 +62,9 @@ async def start_calculation(
     message: Message, state: FSMContext, user: User, aircraft_service: AircraftService
 ) -> None:
     """The full per-tank/per-station "Advanced" calculation -- optional enroute burn,
-    exact per-tank amounts, ramp/takeoff/landing. Reached via the "Advanced / Landing"
-    button on a quick-calculation result (see app.bot.handlers.quick_calculate), not from the
-    main menu directly -- the standard flow for routine use is the 4-question quick calculate."""
+    exact per-tank amounts, ramp/takeoff/landing. Reached through the calculation-mode choice
+    or from a quick-calculation result; the standard flow remains the shorter combined-load
+    calculation for routine use."""
     lang = _lang(user)
     await state.clear()
     if user.selected_aircraft_id:
@@ -106,7 +106,7 @@ async def _begin_for_aircraft(
             user.id, aircraft_id, aircraft_service
         )
     except DomainError as exc:
-        await message.answer(f"Aircraft profile is invalid: {exc}")
+        await message.answer(t("aircraft_profile_invalid", lang, detail=str(exc)))
         return
     if aircraft is None or profile is None:
         await message.answer(t("no_aircraft_selected", lang))
@@ -115,11 +115,7 @@ async def _begin_for_aircraft(
     suspicious = suspicious_non_fuel_stations(profile)
     if suspicious:
         names = ", ".join(station.name for station in suspicious)
-        await message.answer(
-            "Aircraft profile error: these stations look like fuel tanks but are not configured "
-            f"as FUEL: {names}. Edit the aircraft profile before calculating; fuel must be "
-            "entered in gallons, not pounds."
-        )
+        await message.answer(t("fuel_station_type_error", lang, stations=names))
         return
 
     non_fuel_stations = [s for s in profile.stations if s.station_type != StationType.FUEL]
@@ -144,6 +140,9 @@ async def _begin_for_aircraft(
         },
         fuel_station_ids=[s.station_id for s in fuel_stations],
         fuel_station_names={s.station_id: s.name for s in fuel_stations},
+        fuel_station_capacities={
+            s.station_id: str(s.maximum_volume_gal) for s in fuel_stations
+        },
         load_index=0,
         fuel_index=0,
         loads={},
@@ -151,10 +150,10 @@ async def _begin_for_aircraft(
         fuel={},
         _nav_history=[],
     )
-    await message.answer(f"{profile.tail_number} (rev. {profile.revision_number})")
+    await message.answer(profile.tail_number, reply_markup=ReplyKeyboardRemove())
 
     if not non_fuel_stations:
-        await _ask_next_fuel_starting(message, state, user)
+        await _ask_next_fuel_starting(message, state, user, 0)
         return
 
     await _render_load_prompt(message, state, user, 0, show_back=False)
@@ -198,20 +197,29 @@ async def _render_fuel_prompt(message: Message, state: FSMContext, user: User, i
     data = await state.get_data()
     lang = _lang(user)
     fuel_ids = data["fuel_station_ids"]
-    name = data.get("fuel_station_names", {}).get(fuel_ids[index], fuel_ids[index])
+    station_id = fuel_ids[index]
+    name = data.get("fuel_station_names", {}).get(station_id, station_id)
     keyboard = zero_cancel_keyboard(lang) if field == "starting" else skip_cancel_keyboard(lang)
-    await message.answer(t(text_key, lang, station=name), reply_markup=keyboard)
+    if field == "starting":
+        kwargs = {
+            "station": name,
+            "capacity": fmt(Decimal(data["fuel_station_capacities"][station_id]), " gal"),
+        }
+    else:
+        starting = Decimal(data.get("fuel", {}).get(station_id, {}).get("starting_gal", "0"))
+        kwargs = {"station": name, "available": fmt(starting, " gal")}
+    await message.answer(t(text_key, lang, **kwargs), reply_markup=keyboard)
 
 
-async def _cannot_go_back(callback: CallbackQuery) -> None:
-    await callback.answer("Already at the first step.")
+async def _cannot_go_back(callback: CallbackQuery, user: User) -> None:
+    await callback.answer(t("already_first_step", _lang(user)))
 
 
 @router.callback_query(StateFilter(FlightWizard), F.data == "wizard:back")
 async def flight_back(callback: CallbackQuery, state: FSMContext, user: User) -> None:
     checkpoint = await pop_checkpoint(state)
     if checkpoint is None:
-        await _cannot_go_back(callback)
+        await _cannot_go_back(callback, user)
         return
     kind = checkpoint[0]
     if kind == "load":
@@ -221,7 +229,7 @@ async def flight_back(callback: CallbackQuery, state: FSMContext, user: User) ->
     await callback.answer()
 
 
-@router.message(FlightWizard.load_at_station)
+@router.message(FlightWizard.load_at_station, F.text)
 async def got_load_at_station(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     data = await state.get_data()
@@ -319,7 +327,7 @@ async def _ask_next_fuel_starting(message: Message, state: FSMContext, user: Use
     await _render_fuel_prompt(message, state, user, index, "starting")
 
 
-@router.message(FlightWizard.fuel_starting)
+@router.message(FlightWizard.fuel_starting, F.text)
 async def got_fuel_starting(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     try:
@@ -330,11 +338,18 @@ async def got_fuel_starting(message: Message, state: FSMContext, user: User) -> 
     data = await state.get_data()
     fuel_ids = data["fuel_station_ids"]
     index = data["fuel_index"]
+    station_id = fuel_ids[index]
+    capacity = Decimal(data["fuel_station_capacities"][station_id])
+    if gal > capacity:
+        await message.answer(
+            t("fuel_capacity_exceeded", lang, capacity=fmt(capacity, " gal"))
+        )
+        return
     fuel = data["fuel"]
     # The UI asks for fuel at takeoff, not ramp fuel. Therefore no taxi subtraction is applied
     # and the duplicate ramp/takeoff presentation is collapsed later. The domain field remains
     # available for future integrations that provide an actual ramp quantity and taxi burn.
-    fuel[fuel_ids[index]] = {"starting_gal": str(gal), "taxi_burn_gal": "0"}
+    fuel[station_id] = {"starting_gal": str(gal), "taxi_burn_gal": "0"}
     await state.update_data(fuel=fuel)
     await push_checkpoint(state, ("fuel", index, "starting"))
     await _render_fuel_prompt(message, state, user, index, "enroute")
@@ -379,13 +394,21 @@ async def _store_fuel_field_and_advance(
         await _ask_next_fuel_starting(message, state, user, index + 1)
 
 
-@router.message(FlightWizard.fuel_enroute)
+@router.message(FlightWizard.fuel_enroute, F.text)
 async def got_fuel_enroute(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     try:
         gal = parse_decimal(message.text)
     except InputParseError as exc:
         await message.answer(t("error_generic", lang, detail=str(exc)))
+        return
+    data = await state.get_data()
+    station_id = data["fuel_station_ids"][data["fuel_index"]]
+    starting = Decimal(data["fuel"][station_id]["starting_gal"])
+    if gal > starting:
+        await message.answer(
+            t("fuel_burn_exceeded", lang, available=fmt(starting, " gal"))
+        )
         return
     await _store_fuel_field_and_advance(
         message,
@@ -537,7 +560,7 @@ async def flight_review_confirm(
             user.id, data["aircraft_id"], aircraft_service
         )
     except DomainError as exc:
-        await callback.message.answer(f"Aircraft profile is invalid: {exc}")
+        await callback.message.answer(t("aircraft_profile_invalid", lang, detail=str(exc)))
         await callback.answer()
         return
     if aircraft is None or profile is None:
@@ -592,7 +615,7 @@ async def flight_review_confirm(
         _status_header(result, lang, cg_evaluated=profile.envelope is not None),
         "",
     ]
-    lines.append(f"{profile.tail_number} (rev. {profile.revision_number})")
+    lines.append(profile.tail_number)
     lines.append("")
     if profile.envelope is None:
         lines.append("⚠️ No CG envelope on file -- weight checked, CG NOT evaluated.")
@@ -671,8 +694,13 @@ def _history_summary(calc) -> str:
 
 @router.message(F.text.in_({t("menu_history", "en"), t("menu_history", "ru")}))
 async def calculation_history(
-    message: Message, user: User, flight_service: FlightService, aircraft_service: AircraftService
+    message: Message,
+    state: FSMContext,
+    user: User,
+    flight_service: FlightService,
+    aircraft_service: AircraftService,
 ) -> None:
+    await state.clear()
     lang = _lang(user)
     history = await flight_service.list_history(user.id, limit=10)
     if not history:
@@ -697,3 +725,8 @@ async def flight_review_edit(
     data = await state.get_data()
     await callback.answer()
     await _begin_for_aircraft(callback.message, state, user, aircraft_service, data["aircraft_id"])
+
+
+@router.message(StateFilter(FlightWizard))
+async def unsupported_flight_message(message: Message, user: User) -> None:
+    await message.answer(t("unsupported_wizard_message", _lang(user)))

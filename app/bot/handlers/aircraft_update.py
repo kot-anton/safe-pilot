@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 
 from app.bot.handlers.aircraft_wizard import render_empty_weight
 from app.bot.handlers.wizard_nav import goto
@@ -27,7 +27,13 @@ def _lang(user: User) -> str:
 
 
 @router.message(F.text.in_({t("menu_update_aircraft", "en"), t("menu_update_aircraft", "ru")}))
-async def update_aircraft_prompt(message: Message, user: User, aircraft_service: AircraftService) -> None:
+async def update_aircraft_prompt(
+    message: Message,
+    state: FSMContext,
+    user: User,
+    aircraft_service: AircraftService,
+) -> None:
+    await state.clear()
     lang = _lang(user)
     aircraft_list = await aircraft_service.list_aircraft(user.id)
     if not aircraft_list:
@@ -97,6 +103,13 @@ async def update_aircraft_chosen(
         stations=stations,
         envelope_rows=envelope_rows,
     )
-    await callback.message.answer(f"Updating {aircraft.tail_number} (currently rev. {revision.revision_number}).")
+    await callback.message.answer(
+        t(
+            "updating_aircraft",
+            _lang(user),
+            aircraft=aircraft.tail_number,
+        ),
+        reply_markup=ReplyKeyboardRemove(),
+    )
     await goto(callback.message, state, user, AircraftWizard.empty_weight, render_empty_weight, record_history=False)
     await callback.answer()
