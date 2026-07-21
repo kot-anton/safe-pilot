@@ -52,11 +52,14 @@ def aircraft_card_keyboard(lang: str) -> InlineKeyboardMarkup:
     )
 
 
-def skip_cancel_keyboard(lang: str, *, show_keep: bool = False, show_back: bool = True) -> InlineKeyboardMarkup:
+def skip_cancel_keyboard(
+    lang: str, *, show_keep: bool = False, show_skip: bool = True, show_back: bool = True
+) -> InlineKeyboardMarkup:
     row = []
     if show_keep:
         row.append(KEEP_BUTTON)
-    row.append(InlineKeyboardButton(text=t("btn_skip", lang), callback_data="wizard:skip"))
+    if show_skip:
+        row.append(InlineKeyboardButton(text=t("btn_skip", lang), callback_data="wizard:skip"))
     rows = [row]
     footer = []
     if show_back:
@@ -170,7 +173,7 @@ def station_name_keyboard(lang: str, default_name: str, *, show_back: bool = Tru
 def envelope_keyboard(lang: str, *, has_rows: bool = False, show_back: bool = True) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(text="✅ Done", callback_data="wizard:envelope_done")]]
     if has_rows:
-        rows.append([InlineKeyboardButton(text="↩️ Undo last row", callback_data="wizard:undo_last_row")])
+        rows.append([InlineKeyboardButton(text="🗑 Remove a row", callback_data="wizard:remove_row_prompt")])
     if not has_rows:
         rows.append(
             [InlineKeyboardButton(text="⚠️ Skip -- don't check CG for this aircraft", callback_data="wizard:skip_envelope")]

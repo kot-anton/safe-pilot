@@ -49,8 +49,8 @@ automatically -- no separate "Select Aircraft" step required.
 **Add Aircraft** offers **Quick Setup** (recommended default: tail number, model, empty
 weight/CG, max takeoff weight, seats/baggage ARMs, fuel configuration, CG envelope -- nothing
 else) or **Advanced Setup** (adds manufacturer, nickname, ramp/landing/ZFW weights, known
-useful load, source documents). Both produce a full `AircraftRevision`; nothing about
-the underlying data model changes based on which path you took.
+useful load). Both produce a full `AircraftRevision`; nothing about the underlying data model
+changes based on which path you took.
 
 ## Total fuel input: exact vs. range
 
@@ -273,14 +273,14 @@ evaluated") rather than assuming a number.
 ```
 You:  ✈️ Calculate
 Bot:  N4508D (rev. 3)
-Bot:  Front seats -- total weight in lb   [Use last: 440 lb] [0] [Cancel]
+Bot:  Front seats -- total weight in lb   [Use last: 440 lb] [Cancel]
 You:  440
-Bot:  Rear seats -- total weight in lb    [Use last: 0 lb] [0] [Cancel]
+Bot:  Rear seats -- total weight in lb    [Use last: 0 lb] [Cancel]
 You:  0
-Bot:  Baggage -- total weight in lb       [Use last: 10 lb] [0] [Cancel]
+Bot:  Baggage -- total weight in lb       [Use last: 10 lb] [Cancel]
 You:  10
 Bot:  Usable fuel on board -- total US gallons
-      [Full -- 53 gal] [Use last: 53 gal] [0] [Exact tank split] [Cancel]
+      [Full -- 53 gal] [Use last: 53 gal] [Exact tank split] [Cancel]
 You:  (taps "Full -- 53 gal")
 Bot:  N4508D
 
@@ -369,23 +369,23 @@ You:  2560
 Bot:  Maximum Takeoff Weight, in pounds (required):
 You:  2550
 ...  (landing weight, ZFW, known useful load -- all Skip or entered)
-Bot:  Let's configure stations. Add a station?  [Yes] [No]
-You:  (taps "Yes")
+Bot:  Let's configure stations. Add a station?  [➕ Add another station] [✅ Done adding stations]
+You:  (taps "➕ Add another station")
 Bot:  Station type:  [Front Seats] [Rear Seats] [Baggage] [Fuel] [Custom]
 You:  (taps "Front Seats")
 Bot:  Station name -- or just use the suggested default below.  [✅ Use "Front Seats"]
 You:  (taps "✅ Use \"Front Seats\"")
 Bot:  ARM, in inches:
 You:  37.0
-Bot:  Station "Front Seats" added.  [Yes] [No] [🗑 Remove last]
+Bot:  Station "Front Seats" added.  [➕ Add another station] [✅ Done adding stations] [🗑 Remove a station]
 ...  (repeat for Rear Seats, Baggage Area 1, Main Fuel -- Main Fuel additionally asks only for
       max fuel volume in gallons; fuel density is fixed at 6.0 lb/gal (standard avgas) and
       never asked. Seats, baggage, and fuel tanks are always fixed-ARM -- only Custom stations
       are asked whether their ARM is fixed or adjustable, since those are the only ones that
       plausibly move.)
 You:  (taps "No")
-Bot:  Enter CG envelope rows, one per message, as: weight, forward_limit, aft_limit
-      Example format only (not real data): 2200, 35.0, 47.3
+Bot:  CG envelope row: weight, forward_limit, aft_limit (one per message).
+      Example: 2200, 35.0, 47.3
 You:  2200, 35.0, 47.3
 Bot:  Row added (1 so far). Send another, or press Done.
 You:  2400, 37.0, 47.3
@@ -393,30 +393,22 @@ Bot:  Row added (2 so far). Send another, or press Done.
 You:  2550, 41.0, 47.3
 Bot:  Row added (3 so far). Send another, or press Done.
 You:  (taps "✅ Done")
-Bot:  Source document name (optional, e.g. "W&B report #4"):
-You:  Skip
-Bot:  Source document date, YYYY-MM-DD (optional):
-You:  Skip
 Bot:  Please review the aircraft profile: [full summary] [✅ Confirm] [✏️ Edit] [✖ Cancel]
 You:  (taps "✅ Confirm")
 Bot:  Aircraft profile saved.
 
-You:  New Calculation
-Bot:  UNVERIFIED -- Calculations use user-entered aircraft values...
-      N12345 -- rev. 1
-      Combined weight of all occupants at Front Seats, in lb (Enter 0 if empty):
+You:  (from a Quick result, taps "Advanced / Landing")
+Bot:  N12345 (rev. 1)
+Bot:  Front Seats weight, in lb:              [0] [◀ Back] [✖ Cancel]
 You:  340
-Bot:  Combined weight of all occupants at Rear Seats, in lb (Enter 0 if empty):
+Bot:  Rear Seats weight, in lb:               [0] [◀ Back] [✖ Cancel]
 You:  0
-Bot:  Load at Baggage Area 1, in lb (Enter 0 if none):
+Bot:  Baggage Area 1 weight, in lb:           [0] [◀ Back] [✖ Cancel]
 You:  20
 Bot:  Starting fuel in Main Fuel, in US gal:
 You:  30
-Bot:  Planned enroute fuel burn from Main Fuel, in US gal (optional -- Skip if unknown;
-      landing will then not be evaluated):
+Bot:  Planned fuel burn from Main Fuel, in US gal (Skip = landing not evaluated):
 You:  10
-Bot:  Minimum required takeoff fuel in Main Fuel, in US gal (optional):
-You:  15
 Bot:  Please confirm your inputs: [summary] [✅ Confirm] [✏️ Edit] [✖ Cancel]
 You:  (taps "✅ Confirm")
 Bot:  ✅ WITHIN ENTERED LIMITS

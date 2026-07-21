@@ -58,12 +58,7 @@ def _step_keyboard(lang: str, *, last_value: str | None, unit: str) -> InlineKey
     rows = []
     if last_value is not None:
         rows.append([InlineKeyboardButton(text=f"Use last: {last_value} {unit}", callback_data="quick:use_last")])
-    rows.append(
-        [
-            InlineKeyboardButton(text="0", callback_data="quick:zero"),
-            InlineKeyboardButton(text=t("btn_cancel", lang), callback_data="quick:cancel"),
-        ]
-    )
+    rows.append([InlineKeyboardButton(text=t("btn_cancel", lang), callback_data="quick:cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -71,12 +66,7 @@ def _fuel_keyboard(lang: str, *, full_gal: Decimal, last_value: str | None) -> I
     rows = [[InlineKeyboardButton(text=f"Full -- {full_gal:.0f} gal", callback_data="quick:full")]]
     if last_value is not None:
         rows.append([InlineKeyboardButton(text=f"Use last: {last_value} gal", callback_data="quick:use_last")])
-    rows.append(
-        [
-            InlineKeyboardButton(text="0", callback_data="quick:zero"),
-            InlineKeyboardButton(text="Exact tank split", callback_data="quick:advanced"),
-        ]
-    )
+    rows.append([InlineKeyboardButton(text="Exact tank split", callback_data="quick:advanced")])
     rows.append([InlineKeyboardButton(text=t("btn_cancel", lang), callback_data="quick:cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -189,7 +179,7 @@ async def _ask_front(message: Message, state: FSMContext, user: User) -> None:
     data = await state.get_data()
     await state.set_state(QuickCalcWizard.front)
     await message.answer(
-        "Front seats -- total weight in lb",
+        "Front Seats weight, in lb:",
         reply_markup=_step_keyboard(_lang(user), last_value=data.get("last_front_lb"), unit="lb"),
     )
 
@@ -203,13 +193,6 @@ async def got_front(message: Message, state: FSMContext, user: User) -> None:
         return
     await state.update_data(front_lb=str(value))
     await _advance_from_front(message, state, user)
-
-
-@router.callback_query(QuickCalcWizard.front, F.data == "quick:zero")
-async def zero_front(callback: CallbackQuery, state: FSMContext, user: User) -> None:
-    await state.update_data(front_lb="0")
-    await callback.answer()
-    await _advance_from_front(callback.message, state, user)
 
 
 @router.callback_query(QuickCalcWizard.front, F.data == "quick:use_last")
@@ -234,7 +217,7 @@ async def _ask_rear(message: Message, state: FSMContext, user: User) -> None:
     data = await state.get_data()
     await state.set_state(QuickCalcWizard.rear)
     await message.answer(
-        "Rear seats -- total weight in lb",
+        "Rear Seats weight, in lb:",
         reply_markup=_step_keyboard(_lang(user), last_value=data.get("last_rear_lb"), unit="lb"),
     )
 
@@ -248,13 +231,6 @@ async def got_rear(message: Message, state: FSMContext, user: User) -> None:
         return
     await state.update_data(rear_lb=str(value))
     await _advance_from_rear(message, state, user)
-
-
-@router.callback_query(QuickCalcWizard.rear, F.data == "quick:zero")
-async def zero_rear(callback: CallbackQuery, state: FSMContext, user: User) -> None:
-    await state.update_data(rear_lb="0")
-    await callback.answer()
-    await _advance_from_rear(callback.message, state, user)
 
 
 @router.callback_query(QuickCalcWizard.rear, F.data == "quick:use_last")
@@ -277,7 +253,7 @@ async def _ask_baggage(message: Message, state: FSMContext, user: User) -> None:
     data = await state.get_data()
     await state.set_state(QuickCalcWizard.baggage)
     await message.answer(
-        "Baggage -- total weight in lb",
+        "Baggage weight, in lb:",
         reply_markup=_step_keyboard(_lang(user), last_value=data.get("last_baggage_lb"), unit="lb"),
     )
 
@@ -293,13 +269,6 @@ async def got_baggage(message: Message, state: FSMContext, user: User) -> None:
     await _ask_fuel(message, state, user)
 
 
-@router.callback_query(QuickCalcWizard.baggage, F.data == "quick:zero")
-async def zero_baggage(callback: CallbackQuery, state: FSMContext, user: User) -> None:
-    await state.update_data(baggage_lb="0")
-    await callback.answer()
-    await _ask_fuel(callback.message, state, user)
-
-
 @router.callback_query(QuickCalcWizard.baggage, F.data == "quick:use_last")
 async def use_last_baggage(callback: CallbackQuery, state: FSMContext, user: User) -> None:
     data = await state.get_data()
@@ -312,7 +281,7 @@ async def _ask_fuel(message: Message, state: FSMContext, user: User) -> None:
     data = await state.get_data()
     await state.set_state(QuickCalcWizard.fuel)
     await message.answer(
-        "Usable fuel on board -- total US gallons",
+        "Total usable fuel on board, in US gal:",
         reply_markup=_fuel_keyboard(
             _lang(user),
             full_gal=Decimal(data["full_fuel_gal"]),
@@ -329,12 +298,6 @@ async def got_fuel(message: Message, state: FSMContext, user: User) -> None:
         await message.answer(t("error_generic", _lang(user), detail=str(exc)))
         return
     await _finish_fuel(message, state, user, value)
-
-
-@router.callback_query(QuickCalcWizard.fuel, F.data == "quick:zero")
-async def zero_fuel(callback: CallbackQuery, state: FSMContext, user: User) -> None:
-    await callback.answer()
-    await _finish_fuel(callback.message, state, user, Decimal("0"))
 
 
 @router.callback_query(QuickCalcWizard.fuel, F.data == "quick:full")
@@ -509,14 +472,16 @@ async def quick_calculate_confirm(
 
     if result.overall_status != LimitStatus.WITHIN:
         calc_input = _build_recommendation_input(profile, data, result)
-        recs = flight_service.recommend(profile, calc_input, min_fuel_gal=None)
+        recs = flight_service.recommend(profile, calc_input)
         if recs:
-            rec_lines = ["CORRECTION"]
+            rec_lines = [t("recommendations_header", lang)]
             for rec in recs[:1]:
                 rec_lines.append(rec.describe())
                 if rec.note:
                     rec_lines.append(rec.note)
             await callback.message.answer("\n".join(rec_lines))
+        else:
+            await callback.message.answer(t("no_recommendations", lang))
 
     await callback.message.answer("What next?", reply_markup=_result_keyboard())
     # Deliberately not clearing state here: it stays QuickCalcWizard.review so the "Change

@@ -6,5 +6,4 @@ class FlightWizard(StatesGroup):
     load_at_station = State()
     fuel_starting = State()
     fuel_enroute = State()
-    fuel_minimum = State()
     review = State()
