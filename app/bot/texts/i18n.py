@@ -203,8 +203,14 @@ STRINGS: dict[str, dict[str, str]] = {
         "ru": "Максимальный полезный объём топлива в этом баке, в US гал:",
     },
     "ask_fuel_density": {
-        "en": "Fuel density, in lb per US gal. Enter a value or use the 100LL default:",
-        "ru": "Плотность топлива, фунт/US гал. Введите значение или используйте стандарт для 100LL:",
+        "en": (
+            "Fuel type/density is needed to convert gallons to weight. Enter lb per US gal "
+            "or use the 100LL value:"
+        ),
+        "ru": (
+            "Тип/плотность топлива нужны для перевода галлонов в вес. Введите фунт/US гал "
+            "или используйте значение для 100LL:"
+        ),
     },
     "btn_use_100ll_density": {
         "en": "Use 6.0 lb/gal (100LL)",
@@ -264,8 +270,14 @@ STRINGS: dict[str, dict[str, str]] = {
         "ru": "Максимальный вес для станции {station}, в фунтах (сейчас {current}):",
     },
     "ask_edit_fuel_density": {
-        "en": "Fuel density for {station}, in lb per US gal (currently {current}):",
-        "ru": "Плотность топлива для бака {station}, фунт/US гал (сейчас {current}):",
+        "en": (
+            "Fuel type/density for {station}, used to convert gallons to weight, in lb per "
+            "US gal (currently {current}):"
+        ),
+        "ru": (
+            "Тип/плотность топлива для бака {station}, используемые для перевода галлонов "
+            "в вес, фунт/US гал (сейчас {current}):"
+        ),
     },
     "fuel_like_name_edit_error": {
         "en": (
@@ -330,14 +342,17 @@ STRINGS: dict[str, dict[str, str]] = {
     "profile_empty_aircraft": {"en": "EMPTY AIRCRAFT", "ru": "ПУСТОЙ САМОЛЁТ"},
     "profile_empty_weight": {"en": "Weight: {value}", "ru": "Вес: {value}"},
     "profile_empty_cg": {"en": "CG: {value}", "ru": "CG: {value}"},
-    "profile_empty_moment": {"en": "Moment: {value}", "ru": "Момент: {value}"},
     "profile_weight_limits": {"en": "WEIGHT LIMITS", "ru": "ОГРАНИЧЕНИЯ ВЕСА"},
     "profile_limit_ramp": {"en": "Ramp: {value}", "ru": "На перроне: {value}"},
     "profile_limit_takeoff": {"en": "Takeoff: {value}", "ru": "Взлёт: {value}"},
     "profile_limit_landing": {"en": "Landing: {value}", "ru": "Посадка: {value}"},
     "profile_limit_mzfw": {"en": "MZFW: {value}", "ru": "MZFW: {value}"},
     "profile_load_stations": {"en": "LOAD STATIONS ({count})", "ru": "СТАНЦИИ ЗАГРУЗКИ ({count})"},
-    "profile_fuel_tanks": {"en": "FUEL TANKS ({count})", "ru": "ТОПЛИВНЫЕ БАКИ ({count})"},
+    "profile_fuel_tanks": {"en": "FUEL TANKS ({tanks})", "ru": "ТОПЛИВНЫЕ БАКИ ({tanks})"},
+    "profile_total_usable_fuel": {
+        "en": "Total usable fuel: {value}",
+        "ru": "Общий полезный объём: {value}",
+    },
     "profile_arm_fixed": {"en": "ARM {value}", "ru": "ARM {value}"},
     "profile_arm_adjustable": {
         "en": "ARM {minimum}–{maximum} (default {default})",
@@ -345,7 +360,6 @@ STRINGS: dict[str, dict[str, str]] = {
     },
     "profile_station_max_load": {"en": "Maximum load: {value}", "ru": "Максимальная нагрузка: {value}"},
     "profile_tank_usable": {"en": "Usable: {value}", "ru": "Полезный объём: {value}"},
-    "profile_tank_density": {"en": "Density: {value}", "ru": "Плотность: {value}"},
     "profile_cg_envelope": {"en": "CG ENVELOPE ({count} POINTS)", "ru": "ДИАПАЗОН CG ({count} ТОЧКИ)"},
     "profile_cg_envelope_missing": {
         "en": "⚠️ CG ENVELOPE NOT SAVED — CG WILL NOT BE EVALUATED",
@@ -395,8 +409,15 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "Total usable fuel on board at takeoff, in US gal:",
         "ru": "Общий полезный объём топлива на взлёте, в US гал:",
     },
+    "quick_fuel_prompt_tanks": {
+        "en": "Total usable fuel on board at takeoff ({tanks}), in US gal:",
+        "ru": "Общий полезный объём топлива на взлёте ({tanks}), в US гал:",
+    },
     "btn_use_last": {"en": "Use last: {value} {unit}", "ru": "Как в прошлый раз: {value} {unit}"},
-    "btn_full_fuel": {"en": "Full — {value}", "ru": "Полные баки — {value}"},
+    "btn_full_fuel": {
+        "en": "Full tanks — {value} (saved capacity)",
+        "ru": "Полные баки — {value} (сохранённый объём)",
+    },
     "btn_full_tank": {"en": "Full tank — {value}", "ru": "Полный бак — {value}"},
     "quick_review_front": {"en": "Front seats", "ru": "Передние места"},
     "quick_review_rear": {"en": "Rear seats", "ru": "Задние места"},
@@ -433,29 +454,42 @@ STRINGS: dict[str, dict[str, str]] = {
             "топлива для оценки посадочного состояния."
         ),
     },
-    "ask_load_at_station": {"en": "{station} weight, in lb:", "ru": "Вес на «{station}», в фунтах:"},
+    "ask_load_at_station": {
+        "en": "Weight at {station}, in lb:",
+        "ru": "Вес на станции «{station}», в фунтах:",
+    },
     "ask_load_at_adjustable_station": {
         "en": (
-            "{station}: enter weight in lb and the actual ARM in inches as weight / ARM "
-            "(allowed ARM {minimum}-{maximum})."
+            "{station}\n"
+            "Enter weight in lb and actual ARM in inches as: weight / ARM\n"
+            "Allowed ARM: {minimum}–{maximum} in"
         ),
         "ru": (
-            "{station}: введите вес в фунтах и фактическое плечо ARM в дюймах как вес / ARM "
-            "(допустимое ARM {minimum}-{maximum})."
+            "{station}\n"
+            "Введите вес в фунтах и фактическое ARM в дюймах как: вес / ARM\n"
+            "Допустимое ARM: {minimum}–{maximum} дюйма"
         ),
     },
     "ask_fuel_starting": {
-        "en": "Fuel in {station} at takeoff, in US gal (usable capacity {capacity}):",
-        "ru": "Топливо в баке {station} на взлёте, US гал (полезный объём {capacity}):",
+        "en": (
+            "Usable fuel in {station} at takeoff, in US gal:\n"
+            "Saved usable capacity: {capacity}"
+        ),
+        "ru": (
+            "Полезное топливо в баке {station} на взлёте, в US гал:\n"
+            "Сохранённый полезный объём: {capacity}"
+        ),
     },
     "ask_fuel_enroute": {
         "en": (
-            "Planned fuel burn from {station}, in US gal (up to {available}; "
-            "Skip = do not evaluate landing):"
+            "Planned fuel burn from {station}, in US gal:\n"
+            "Available at takeoff: {available}\n"
+            "Skip = do not evaluate landing."
         ),
         "ru": (
-            "Плановый расход из бака {station}, US гал (не более {available}; "
-            "Пропустить = не оценивать посадку):"
+            "Плановый расход из бака {station}, в US гал:\n"
+            "Доступно на взлёте: {available}\n"
+            "Пропустить = не оценивать посадку."
         ),
     },
     "review_flight_inputs": {"en": "Please confirm your inputs:", "ru": "Подтвердите введённые данные:"},

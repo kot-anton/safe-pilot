@@ -20,7 +20,13 @@ from aiogram.types import (
     ReplyKeyboardRemove,
 )
 
-from app.bot.handlers._common import InputParseError, fmt, parse_decimal
+from app.bot.handlers._common import (
+    InputParseError,
+    compact_decimal,
+    fmt,
+    parse_decimal,
+    short_tank_label,
+)
 from app.bot.keyboards.common import aircraft_list_keyboard, main_menu_keyboard
 from app.bot.states.quick_calc_wizard import QuickCalcWizard
 from app.bot.texts.i18n import t
@@ -85,7 +91,7 @@ async def _last_quick_input(
             except (ArithmeticError, TypeError, ValueError):
                 continue
             if value.is_finite() and value >= 0:
-                values[key] = str(value)
+                values[key] = compact_decimal(value)
         if values:
             return values
     return None
@@ -99,7 +105,12 @@ def _step_keyboard(
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=t("btn_use_last", lang, value=last_value, unit=unit),
+                    text=t(
+                        "btn_use_last",
+                        lang,
+                        value=compact_decimal(last_value),
+                        unit=unit,
+                    ),
                     callback_data="quick:use_last",
                 )
             ]
@@ -125,7 +136,12 @@ def _fuel_keyboard(
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=t("btn_use_last", lang, value=last_value, unit="gal"),
+                    text=t(
+                        "btn_use_last",
+                        lang,
+                        value=compact_decimal(last_value),
+                        unit="gal",
+                    ),
                     callback_data="quick:use_last",
                 )
             ]
@@ -367,6 +383,9 @@ async def _begin(
         last_baggage_lb=(last or {}).get("baggage_lb"),
         last_total_fuel_gal=(last or {}).get("total_fuel_gal"),
         full_fuel_gal=str(full_fuel),
+        fuel_tank_labels=[
+            short_tank_label(station.name) for station in profile.fuel_stations
+        ],
     )
     await message.answer(profile.tail_number, reply_markup=ReplyKeyboardRemove())
 
@@ -513,9 +532,14 @@ async def use_last_baggage(
 
 async def _ask_fuel(message: Message, state: FSMContext, user: User) -> None:
     data = await state.get_data()
+    tank_labels = data.get("fuel_tank_labels") or []
     await state.set_state(QuickCalcWizard.fuel)
     await message.answer(
-        t("quick_fuel_prompt", _lang(user)),
+        t(
+            "quick_fuel_prompt_tanks" if tank_labels else "quick_fuel_prompt",
+            _lang(user),
+            tanks=", ".join(tank_labels),
+        ),
         reply_markup=_fuel_keyboard(
             _lang(user),
             full_gal=Decimal(data["full_fuel_gal"]),

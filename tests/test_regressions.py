@@ -2,7 +2,7 @@ import json
 from decimal import Decimal as D
 from types import SimpleNamespace
 
-from app.bot.handlers import aircraft_wizard, flight_calculation
+from app.bot.handlers import aircraft_wizard, flight_calculation, quick_calculate
 from app.bot.handlers.aircraft_wizard import _apply_station_type_change, got_station_edit_arm
 from app.bot.handlers.flight_calculation import _history_summary, _parse_load_entry
 from app.bot.states.aircraft_wizard import AircraftWizard
@@ -53,6 +53,46 @@ class _FakeCallback:
 
     async def answer(self, *args, **kwargs):
         self.answers.append((args, kwargs))
+
+
+async def test_quick_fuel_prompt_identifies_configured_tanks_and_saved_total():
+    state = _FakeState(
+        {
+            "fuel_tank_labels": ["Main", "Aux"],
+            "full_fuel_gal": "53.0000",
+            "last_total_fuel_gal": "40.0000",
+        }
+    )
+    message = _FakeMessage()
+    user = SimpleNamespace(language="en")
+
+    await quick_calculate._ask_fuel(message, state, user)
+
+    prompt, kwargs = message.answers[-1]
+    assert prompt == "Total usable fuel on board at takeoff (Main, Aux), in US gal:"
+    assert kwargs["reply_markup"].inline_keyboard[0][0].text == (
+        "Full tanks — 53 gal (saved capacity)"
+    )
+
+
+async def test_empty_cg_and_moment_are_derived_from_the_entered_aircraft_record():
+    user = SimpleNamespace(language="en")
+
+    cg_state = _FakeState(
+        {"basic_empty_weight_lb": "1960.8", "setup_mode": "quick"}
+    )
+    await aircraft_wizard.got_empty_cg(
+        _FakeMessage("79.1300"), cg_state, user
+    )
+    assert D(cg_state.data["basic_empty_moment_lb_in"]) == D("155158.104")
+
+    moment_state = _FakeState(
+        {"basic_empty_weight_lb": "1960.8", "setup_mode": "quick"}
+    )
+    await aircraft_wizard.got_empty_moment(
+        _FakeMessage("155158.104"), moment_state, user
+    )
+    assert D(moment_state.data["basic_empty_cg_in"]) == D("79.13")
 
 
 async def test_edit_station_arm_returns_to_station_hub_state():
@@ -188,7 +228,72 @@ async def test_advanced_flow_with_only_fuel_stations_starts_at_first_tank(monkey
 
     assert state.current_state == FlightWizard.fuel_starting
     assert state.data["fuel_index"] == 0
-    assert any("usable capacity 40 gal" in text for text, _ in message.answers)
+    assert any("Saved usable capacity: 40 gal" in text for text, _ in message.answers)
+
+
+async def test_advanced_flow_uses_canonical_station_order(monkeypatch):
+    profile = AircraftProfile(
+        tail_number="N100AA",
+        revision_number=1,
+        basic_empty_weight_lb=D("1000"),
+        basic_empty_moment_lb_in=D("40000"),
+        max_takeoff_weight_lb=D("2000"),
+        stations=[
+            StationProfile("rear", "Rear Seats", StationType.REAR_SEATS, D("73")),
+            StationProfile(
+                "main",
+                "Main Tank",
+                StationType.FUEL,
+                D("48"),
+                maximum_volume_gal=D("20"),
+                fuel_density_lb_per_gal=D("6"),
+            ),
+            StationProfile("bag", "Baggage", StationType.BAGGAGE, D("95")),
+            StationProfile("front", "Front Seats", StationType.FRONT_SEATS, D("37")),
+            StationProfile(
+                "aux",
+                "Aux Tank",
+                StationType.FUEL,
+                D("60"),
+                maximum_volume_gal=D("10"),
+                fuel_density_lb_per_gal=D("6"),
+            ),
+        ],
+        envelope=None,
+    )
+    aircraft = SimpleNamespace(id=1)
+
+    async def fake_load(*_args):
+        return aircraft, profile
+
+    class FakeFlightService:
+        async def list_history(self, *_args, **_kwargs):
+            return []
+
+    monkeypatch.setattr(flight_calculation, "_load_profile_and_aircraft", fake_load)
+    state = _FakeState({})
+    message = _FakeMessage()
+    user = SimpleNamespace(id=7, language="en")
+
+    await flight_calculation._begin_for_aircraft(
+        message,
+        state,
+        user,
+        aircraft_service=None,
+        flight_service=FakeFlightService(),
+        aircraft_id=1,
+    )
+
+    assert state.data["non_fuel_station_ids"] == ["front", "rear", "bag"]
+    assert state.data["fuel_station_ids"] == ["main", "aux"]
+    assert state.current_state == FlightWizard.load_at_station
+    assert message.answers[-1][0] == "Combined weight on the front seats, in lb:"
+
+    await flight_calculation._render_load_prompt(message, state, user, 1)
+    assert message.answers[-1][0] == "Combined weight on the rear seats, in lb:"
+
+    await flight_calculation._render_load_prompt(message, state, user, 2)
+    assert message.answers[-1][0] == "Total baggage weight, in lb:"
 
 
 async def test_advanced_flow_rejects_fuel_above_tank_capacity_immediately():
@@ -396,3 +501,36 @@ async def test_update_skips_unset_maximum_zero_fuel_weight_question():
     assert state.current_state == AircraftWizard.known_useful_load
     assert any("Known Useful Load" in text for text, _ in message.answers)
     assert all("Zero Fuel Weight" not in text for text, _ in message.answers)
+
+
+async def test_station_edit_list_is_canonical_but_keeps_original_callback_indexes():
+    state = _FakeState(
+        {
+            "stations": [
+                {"name": "Rear Seats", "station_type": "REAR_SEATS"},
+                {"name": "Main Tank", "station_type": "FUEL"},
+                {"name": "Front Seats", "station_type": "FRONT_SEATS"},
+                {"name": "Baggage", "station_type": "BAGGAGE"},
+            ]
+        },
+        AircraftWizard.station_add_prompt,
+    )
+    message = _FakeMessage()
+    user = SimpleNamespace(language="en")
+
+    await aircraft_wizard.render_edit_station_prompt(message, state, user)
+
+    keyboard = message.answers[-1][1]["reply_markup"]
+    station_buttons = [row[0] for row in keyboard.inline_keyboard[:-1]]
+    assert [button.text for button in station_buttons] == [
+        "✏️ Front Seats",
+        "✏️ Rear Seats",
+        "✏️ Baggage",
+        "✏️ Main Tank",
+    ]
+    assert [button.callback_data for button in station_buttons] == [
+        "wizard:edit_at:2",
+        "wizard:edit_at:0",
+        "wizard:edit_at:3",
+        "wizard:edit_at:1",
+    ]

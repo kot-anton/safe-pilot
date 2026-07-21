@@ -113,7 +113,7 @@ A new aircraft is selected automatically after creation. Editing still creates a
 - Python bytecode compilation: passed
 - Static undefined/import check with `pyflakes`: passed
 - Whitespace/conflict-marker check with `git diff --check`: passed
-- Automated test suite: **101 passed**
+- Automated test suite: **105 passed**
 - SQLite database migration from the supplied revision to Alembic head: passed
 - SQLite `PRAGMA integrity_check`: `ok`
 - SQLite foreign-key check: no violations

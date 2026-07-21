@@ -12,7 +12,12 @@ from decimal import Decimal
 from app.database.models import Aircraft, AircraftRevision, StationTypeEnum
 from app.domain.envelope import CGEnvelope, EnvelopeRow
 from app.domain.exceptions import InconsistentAircraftDataError
-from app.domain.models import AircraftProfile, StationProfile, StationType
+from app.domain.models import (
+    AircraftProfile,
+    StationProfile,
+    StationType,
+    station_type_order,
+)
 from app.repositories.aircraft_repository import AircraftRepository
 
 USEFUL_LOAD_TOLERANCE_LB = Decimal("5.0")
@@ -231,6 +236,10 @@ class AircraftService:
         return await self._add_revision(aircraft, draft)
 
     async def _add_revision(self, aircraft: Aircraft, draft: AircraftRevisionDraft) -> AircraftRevision:
+        ordered_stations = sorted(
+            draft.stations,
+            key=lambda station: station_type_order(station.station_type),
+        )
         stations = [
             {
                 "name": s.name,
@@ -244,7 +253,7 @@ class AircraftService:
                 "fuel_density_lb_per_gal": s.fuel_density_lb_per_gal,
                 "active": True,
             }
-            for s in draft.stations
+            for s in ordered_stations
         ]
         envelope_rows = [
             {

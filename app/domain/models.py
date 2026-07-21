@@ -22,6 +22,26 @@ class StationType(str, Enum):
     CUSTOM = "CUSTOM"
 
 
+_STATION_TYPE_ORDER = {
+    StationType.FRONT_SEATS: 0,
+    StationType.REAR_SEATS: 1,
+    StationType.PASSENGER: 2,
+    StationType.BAGGAGE: 3,
+    StationType.CUSTOM: 4,
+    StationType.FUEL: 5,
+}
+
+
+def station_type_order(station_type: StationType | str) -> int:
+    """Canonical pilot-facing order; sorting stays stable within one station type."""
+    raw_value = getattr(station_type, "value", station_type)
+    try:
+        normalized = StationType(raw_value)
+    except (TypeError, ValueError):
+        return 99
+    return _STATION_TYPE_ORDER[normalized]
+
+
 FUEL_STATION_TYPES = {StationType.FUEL}
 BAGGAGE_STATION_TYPES = {StationType.BAGGAGE}
 
@@ -136,6 +156,14 @@ class AircraftProfile:
         ids = [station.station_id for station in self.stations]
         if len(ids) != len(set(ids)):
             raise InvalidStationError("Aircraft profile contains duplicate station ids")
+        object.__setattr__(
+            self,
+            "stations",
+            sorted(
+                self.stations,
+                key=lambda station: station_type_order(station.station_type),
+            ),
+        )
 
     @property
     def basic_empty_cg_in(self) -> Decimal:

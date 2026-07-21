@@ -26,7 +26,7 @@ from aiogram.types import (
     ReplyKeyboardRemove,
 )
 
-from app.bot.handlers._common import InputParseError, fmt, parse_decimal
+from app.bot.handlers._common import InputParseError, compact_decimal, fmt, parse_decimal
 from app.bot.handlers.wizard_nav import pop_checkpoint, push_checkpoint
 from app.bot.keyboards.common import (
     aircraft_list_keyboard,
@@ -71,7 +71,7 @@ def _history_decimal(value, *, allow_negative: bool = False) -> str | None:
         return None
     if not decimal.is_finite() or (not allow_negative and decimal < 0):
         return None
-    return str(decimal)
+    return compact_decimal(decimal)
 
 
 async def _last_advanced_input(
@@ -137,11 +137,20 @@ def _load_keyboard(
 ) -> InlineKeyboardMarkup:
     rows = []
     if last_value is not None and (not adjustable or last_arm is not None):
-        unit = "lb" if not adjustable else f"lb @ {last_arm} in"
+        unit = (
+            "lb"
+            if not adjustable
+            else f"lb @ {compact_decimal(last_arm)} in"
+        )
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=t("btn_use_last", lang, value=last_value, unit=unit),
+                    text=t(
+                        "btn_use_last",
+                        lang,
+                        value=compact_decimal(last_value),
+                        unit=unit,
+                    ),
                     callback_data="flight:use_last_load",
                 )
             ]
@@ -177,7 +186,12 @@ def _fuel_start_keyboard(
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=t("btn_use_last", lang, value=last_value, unit="gal"),
+                    text=t(
+                        "btn_use_last",
+                        lang,
+                        value=compact_decimal(last_value),
+                        unit="gal",
+                    ),
                     callback_data="flight:use_last_fuel",
                 )
             ]
@@ -371,7 +385,17 @@ async def _render_load_prompt(message: Message, state: FSMContext, user: User, i
     station_ids = data["non_fuel_station_ids"]
     station_id = station_ids[index]
     name = data.get("non_fuel_station_names", {}).get(station_id, station_id)
-    if data.get("non_fuel_station_adjustable", {}).get(station_id, False):
+    adjustable = data.get("non_fuel_station_adjustable", {}).get(station_id, False)
+    station_type = data.get("non_fuel_station_types", {}).get(station_id)
+    same_type_count = list(data.get("non_fuel_station_types", {}).values()).count(
+        station_type
+    )
+    standard_prompt_keys = {
+        StationType.FRONT_SEATS.value: "quick_front_prompt",
+        StationType.REAR_SEATS.value: "quick_rear_prompt",
+        StationType.BAGGAGE.value: "quick_baggage_prompt",
+    }
+    if adjustable:
         minimum = data.get("non_fuel_station_min_arms", {}).get(station_id)
         maximum = data.get("non_fuel_station_max_arms", {}).get(station_id)
         prompt = t(
@@ -381,9 +405,12 @@ async def _render_load_prompt(message: Message, state: FSMContext, user: User, i
             minimum=minimum,
             maximum=maximum,
         )
+    elif station_type in standard_prompt_keys and same_type_count == 1:
+        # Use the exact same wording as Regular calculation for the common one-station
+        # Front/Rear/Baggage profile. Named prompts remain necessary for duplicate compartments.
+        prompt = t(standard_prompt_keys[station_type], lang)
     else:
         prompt = t("ask_load_at_station", lang, station=name)
-    adjustable = data.get("non_fuel_station_adjustable", {}).get(station_id, False)
     await message.answer(
         prompt,
         reply_markup=_load_keyboard(

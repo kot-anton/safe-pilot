@@ -159,8 +159,8 @@ STATION_TYPE_DEFAULT_NAMES = {
     StationTypeEnum.FRONT_SEATS: "Front Seats",
     StationTypeEnum.REAR_SEATS: "Rear Seats",
     StationTypeEnum.BAGGAGE: "Baggage Area",
-    StationTypeEnum.FUEL: "Fuel Tank",
     StationTypeEnum.CUSTOM: "Custom Station",
+    StationTypeEnum.FUEL: "Fuel Tank",
 }
 STATION_TYPE_TEXT_KEYS = {
     StationTypeEnum.FRONT_SEATS: "station_type_front",

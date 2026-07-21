@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime
+import re
 from decimal import Decimal, InvalidOperation
 
 from app.domain.units import to_decimal
@@ -57,3 +58,31 @@ def fmt(value: Decimal | None, unit: str = "") -> str:
     if text.endswith(".0"):
         text = text[:-2]
     return f"{text}{unit}"
+
+
+def compact_decimal(value: Decimal | str) -> str:
+    """Preserve entered precision while removing insignificant trailing decimal zeros."""
+    decimal = value if isinstance(value, Decimal) else Decimal(value)
+    text = format(decimal, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return "0" if text in {"-0", ""} else text
+
+
+def short_tank_label(name: str) -> str:
+    """Return a concise label derived from a configured tank name.
+
+    Tank roles remain aircraft-profile data; this only removes redundant English words such
+    as ``Fuel`` and ``Tanks`` for compact pilot-facing lists. Non-English and custom names are
+    preserved when no generic English words are present.
+    """
+    cleaned_name = name.strip()
+    words = cleaned_name.split()
+    generic_words = {"fuel", "tank", "tanks"}
+    concise_words = [
+        word
+        for word in words
+        if re.sub(r"[^a-z]", "", word.lower()) not in generic_words
+    ]
+    concise = " ".join(concise_words).strip(" -–—,;/")
+    return concise or cleaned_name

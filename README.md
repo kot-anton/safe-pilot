@@ -69,6 +69,15 @@ Quick Setup collects the minimum profile needed for the normal workflow:
 - each usable fuel tank capacity, ARM, and confirmed fuel density;
 - weight-dependent CG envelope rows.
 
+Each tank's saved usable capacity is authoritative. The bot adds those configured values to
+show the aircraft's total usable fuel and to build the **Full tanks** shortcut; it does not
+keep a second hidden or hardcoded total. Fuel density is configurable because gallons must be
+converted to weight for the calculation, but it is omitted from the normal profile review.
+
+Basic Empty Moment is likewise not an aircraft template constant. If the pilot enters Basic
+Empty CG, the bot derives moment as `Basic Empty Weight × Basic Empty CG`; if the aircraft
+records publish moment instead, the bot stores that entered moment and derives CG.
+
 ### Advanced Setup
 
 Advanced Setup additionally collects optional ramp, landing, and zero-fuel weight limits, known useful load for a consistency check, nickname, and manufacturer.
@@ -156,7 +165,7 @@ Run tests:
 pytest -q
 ```
 
-Current review build: **101 tests passing**.
+Current review build: **105 tests passing**.
 
 ## Docker
 

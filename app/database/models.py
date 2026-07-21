@@ -115,7 +115,11 @@ class AircraftRevision(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     aircraft: Mapped["Aircraft"] = relationship(back_populates="revisions", foreign_keys=[aircraft_id])
-    stations: Mapped[list["Station"]] = relationship(back_populates="aircraft_revision", cascade="all, delete-orphan")
+    stations: Mapped[list["Station"]] = relationship(
+        back_populates="aircraft_revision",
+        cascade="all, delete-orphan",
+        order_by="Station.display_order",
+    )
     envelope_rows: Mapped[list["CGEnvelopeRow"]] = relationship(
         back_populates="aircraft_revision", cascade="all, delete-orphan", order_by="CGEnvelopeRow.weight_lb"
     )
