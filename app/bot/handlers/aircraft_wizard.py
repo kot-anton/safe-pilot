@@ -27,10 +27,12 @@ from aiogram.types import (
 
 from app.bot.handlers._common import (
     InputParseError,
+    compact_decimal,
     fmt,
     parse_decimal,
     parse_optional_decimal,
     parse_optional_text,
+    short_tank_label,
 )
 from app.bot.handlers.wizard_nav import goto, go_back
 from app.bot.keyboards.common import (
@@ -51,7 +53,7 @@ from app.bot.texts.i18n import t
 from app.database.models import StationTypeEnum, User
 from app.domain.envelope import CGEnvelope, EnvelopeRow
 from app.domain.exceptions import DomainError, InvalidEnvelopeError
-from app.domain.models import StationType
+from app.domain.models import StationType, station_type_order
 from app.services.aircraft_service import (
     AircraftRevisionDraft,
     AircraftService,
@@ -100,6 +102,17 @@ def _current_suffix(data: dict, key: str, unit: str = "", lang: str = "en") -> s
     except (InvalidOperation, ValueError):
         display = f"{value}{unit}"
     return f"\n\n({t('current_value_hint', lang, value=display)})"
+
+
+def _ordered_station_items(stations: list[dict]) -> list[tuple[int, dict]]:
+    """Canonical display order while retaining original indexes for edit/remove callbacks."""
+    return sorted(
+        enumerate(stations),
+        key=lambda item: (
+            station_type_order(item[1].get("station_type", "")),
+            item[0],
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +247,8 @@ async def render_station_add_prompt(message: Message, state: FSMContext, user: U
     text = t("ask_add_station", lang)
     if stations:
         text += f"\n\n{t('stations_added', lang)}\n" + "\n".join(
-            f"- {s['name']}" for s in stations
+            f"- {station['name']}"
+            for _, station in _ordered_station_items(stations)
         )
     await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
@@ -244,8 +258,13 @@ async def render_remove_station_prompt(message: Message, state: FSMContext, user
     data = await state.get_data()
     stations = data.get("stations", [])
     rows = [
-        [InlineKeyboardButton(text=f"🗑 {s['name']}", callback_data=f"wizard:remove_at:{i}")]
-        for i, s in enumerate(stations)
+        [
+            InlineKeyboardButton(
+                text=f"🗑 {station['name']}",
+                callback_data=f"wizard:remove_at:{original_index}",
+            )
+        ]
+        for original_index, station in _ordered_station_items(stations)
     ]
     rows.append([InlineKeyboardButton(text=t("btn_back", lang), callback_data="wizard:remove_cancel")])
     await message.answer(
@@ -259,8 +278,13 @@ async def render_edit_station_prompt(message: Message, state: FSMContext, user: 
     data = await state.get_data()
     stations = data.get("stations", [])
     rows = [
-        [InlineKeyboardButton(text=f"✏️ {s['name']}", callback_data=f"wizard:edit_at:{i}")]
-        for i, s in enumerate(stations)
+        [
+            InlineKeyboardButton(
+                text=f"✏️ {station['name']}",
+                callback_data=f"wizard:edit_at:{original_index}",
+            )
+        ]
+        for original_index, station in _ordered_station_items(stations)
     ]
     rows.append([InlineKeyboardButton(text=t("btn_back", lang), callback_data="wizard:edit_cancel")])
     await message.answer(
@@ -1647,7 +1671,7 @@ def build_draft_from_state_data(data: dict) -> AircraftRevisionDraft:
             maximum_volume_gal=Decimal(s["maximum_volume_gal"]) if s.get("maximum_volume_gal") else None,
             fuel_density_lb_per_gal=Decimal(s["fuel_density_lb_per_gal"]) if s.get("fuel_density_lb_per_gal") else None,
         )
-        for s in data.get("stations", [])
+        for _, s in _ordered_station_items(data.get("stations", []))
     ]
     envelope_rows = [
         EnvelopeRowDraft(Decimal(r["weight_lb"]), Decimal(r["forward_cg_limit_in"]), Decimal(r["aft_cg_limit_in"]))
@@ -1718,12 +1742,7 @@ def render_summary(data: dict, lang: str) -> str:
             t(
                 "profile_empty_cg",
                 lang,
-                value=_summary_fmt(data["basic_empty_cg_in"], " in"),
-            ),
-            t(
-                "profile_empty_moment",
-                lang,
-                value=_summary_fmt(data["basic_empty_moment_lb_in"], " lb-in"),
+                value=f"{compact_decimal(data['basic_empty_cg_in'])} in",
             ),
             "",
             t("profile_weight_limits", lang),
@@ -1761,28 +1780,19 @@ def render_summary(data: dict, lang: str) -> str:
             )
         )
 
-    stations = data.get("stations", [])
+    stations = [
+        station for _, station in _ordered_station_items(data.get("stations", []))
+    ]
     fuel_stations = [
         station
         for station in stations
         if station.get("station_type") == StationType.FUEL.value
     ]
     load_stations = [station for station in stations if station not in fuel_stations]
-    station_order = {
-        StationType.FRONT_SEATS.value: 0,
-        StationType.REAR_SEATS.value: 1,
-        StationType.PASSENGER.value: 2,
-        StationType.BAGGAGE.value: 3,
-        StationType.CUSTOM.value: 4,
-    }
-    load_stations = sorted(
-        enumerate(load_stations),
-        key=lambda item: (station_order.get(item[1].get("station_type"), 99), item[0]),
-    )
 
     if load_stations:
         lines.extend(["", t("profile_load_stations", lang, count=len(load_stations))])
-        for _, station in load_stations:
+        for station in load_stations:
             lines.append(f"• {station['name']} — {_summary_arm(station, lang)}")
             if station.get("maximum_weight_lb") is not None:
                 lines.append(
@@ -1795,30 +1805,39 @@ def render_summary(data: dict, lang: str) -> str:
                 )
 
     if fuel_stations:
-        lines.extend(["", t("profile_fuel_tanks", lang, count=len(fuel_stations))])
+        tank_labels = [short_tank_label(station["name"]) for station in fuel_stations]
+        total_usable_fuel = sum(
+            (
+                Decimal(station["maximum_volume_gal"])
+                for station in fuel_stations
+                if station.get("maximum_volume_gal") is not None
+            ),
+            Decimal("0"),
+        )
+        lines.extend(
+            [
+                "",
+                t("profile_fuel_tanks", lang, tanks=", ".join(tank_labels)),
+                t(
+                    "profile_total_usable_fuel",
+                    lang,
+                    value=_summary_fmt(total_usable_fuel, " gal"),
+                ),
+            ]
+        )
         for station in fuel_stations:
-            lines.append(f"• {station['name']} — {_summary_arm(station, lang)}")
-            fuel_details = []
+            lines.append(
+                f"• {short_tank_label(station['name'])} — {_summary_arm(station, lang)}"
+            )
             if station.get("maximum_volume_gal") is not None:
-                fuel_details.append(
-                    t(
+                lines.append(
+                    "  "
+                    + t(
                         "profile_tank_usable",
                         lang,
                         value=_summary_fmt(station["maximum_volume_gal"], " gal"),
                     )
                 )
-            if station.get("fuel_density_lb_per_gal") is not None:
-                fuel_details.append(
-                    t(
-                        "profile_tank_density",
-                        lang,
-                        value=_summary_fmt(
-                            station["fuel_density_lb_per_gal"], " lb/gal"
-                        ),
-                    )
-                )
-            if fuel_details:
-                lines.append("  " + " • ".join(fuel_details))
 
     envelope_rows = data.get("envelope_rows", [])
     lines.append("")

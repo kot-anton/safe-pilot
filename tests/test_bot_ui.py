@@ -91,8 +91,8 @@ def test_aircraft_review_is_compact_and_hides_internal_station_enums():
         "nickname": None,
         "manufacturer": None,
         "basic_empty_weight_lb": "1960.8",
-        "basic_empty_cg_in": "79.1",
-        "basic_empty_moment_lb_in": "155158.1",
+        "basic_empty_cg_in": "79.1300",
+        "basic_empty_moment_lb_in": "155158.1040",
         "max_ramp_weight_lb": "2785",
         "max_takeoff_weight_lb": "2775",
         "max_landing_weight_lb": "2775",
@@ -125,6 +125,15 @@ def test_aircraft_review_is_compact_and_hides_internal_station_enums():
                 "maximum_volume_gal": None,
                 "fuel_density_lb_per_gal": None,
             },
+            {
+                "name": "Aux Fuel Tanks",
+                "station_type": "FUEL",
+                "default_arm_in": "94",
+                "is_adjustable_arm": False,
+                "maximum_weight_lb": None,
+                "maximum_volume_gal": "13.0000",
+                "fuel_density_lb_per_gal": "6",
+            },
         ],
         "envelope_rows": [
             {
@@ -141,11 +150,16 @@ def test_aircraft_review_is_compact_and_hides_internal_station_enums():
     assert "FRONT_SEATS" not in summary
     assert "(FUEL)" not in summary
     assert "N4508D — Bonanza" in summary
-    assert "Moment: 155,158.1 lb-in" in summary
+    assert "CG: 79.13 in" in summary
+    assert "Moment:" not in summary
     assert "LOAD STATIONS (2)" in summary
-    assert "FUEL TANKS (1)" in summary
-    assert "• Main Fuel Tanks — ARM 75 in" in summary
-    assert "Usable: 40 gal • Density: 6 lb/gal" in summary
+    assert "FUEL TANKS (Main, Aux)" in summary
+    assert "Total usable fuel: 53 gal" in summary
+    assert "• Main — ARM 75 in" in summary
+    assert "• Aux — ARM 94 in" in summary
+    assert "Usable: 40 gal" in summary
+    assert "Usable: 13 gal" in summary
+    assert "Density:" not in summary
     assert "Max Zero Fuel Weight" not in summary
     assert summary.index("Front Seats") < summary.index("Rear Seats")
 
@@ -155,17 +169,19 @@ def _inline_callbacks(keyboard):
 
 
 def test_calculation_shortcuts_do_not_offer_literal_zero_buttons():
-    quick_load = _step_keyboard("en", last_value="180", unit="lb")
-    quick_fuel = _fuel_keyboard("en", full_gal=Decimal("40"), last_value="25")
+    quick_load = _step_keyboard("en", last_value="180.0000", unit="lb")
+    quick_fuel = _fuel_keyboard(
+        "en", full_gal=Decimal("53.0000"), last_value="53.0000"
+    )
     advanced_load = _load_keyboard(
         "en",
-        last_value="180",
+        last_value="180.0000",
         last_arm=None,
         adjustable=False,
         show_back=False,
     )
     advanced_fuel = _fuel_start_keyboard(
-        "en", capacity=Decimal("20"), last_value="12"
+        "en", capacity=Decimal("20"), last_value="12.0000"
     )
 
     for keyboard in (quick_load, quick_fuel, advanced_load, advanced_fuel):
@@ -180,6 +196,10 @@ def test_calculation_shortcuts_do_not_offer_literal_zero_buttons():
     assert "flight:use_last_load" in _inline_callbacks(advanced_load)
     assert "flight:full_fuel" in _inline_callbacks(advanced_fuel)
     assert "flight:use_last_fuel" in _inline_callbacks(advanced_fuel)
+    assert quick_load.inline_keyboard[0][0].text == "Use last: 180 lb"
+    assert "Full tanks — 53 gal (saved capacity)" == quick_fuel.inline_keyboard[0][0].text
+    assert quick_fuel.inline_keyboard[1][0].text == "Use last: 53 gal"
+    assert advanced_fuel.inline_keyboard[1][0].text == "Use last: 12 gal"
 
 
 def test_new_user_language_follows_supported_telegram_locale():

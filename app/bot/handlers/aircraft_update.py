@@ -17,6 +17,7 @@ from app.bot.keyboards.common import aircraft_list_keyboard
 from app.bot.states.aircraft_wizard import AircraftWizard
 from app.bot.texts.i18n import t
 from app.database.models import User
+from app.domain.models import station_type_order
 from app.services.aircraft_service import AircraftService
 
 router = Router(name="aircraft_update")
@@ -58,6 +59,13 @@ async def update_aircraft_chosen(
         await callback.answer()
         return
 
+    revision_stations = sorted(
+        (station for station in revision.stations if station.active),
+        key=lambda station: (
+            station_type_order(station.station_type),
+            station.display_order,
+        ),
+    )
     stations = [
         {
             "name": s.name,
@@ -70,8 +78,7 @@ async def update_aircraft_chosen(
             "maximum_volume_gal": str(s.maximum_volume_gal) if s.maximum_volume_gal is not None else None,
             "fuel_density_lb_per_gal": str(s.fuel_density_lb_per_gal) if s.fuel_density_lb_per_gal is not None else None,
         }
-        for s in revision.stations
-        if s.active
+        for s in revision_stations
     ]
     envelope_rows = [
         {
