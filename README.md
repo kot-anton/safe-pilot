@@ -377,8 +377,6 @@ Bot:  Station name -- or just use the suggested default below.  [✅ Use "Front 
 You:  (taps "✅ Use \"Front Seats\"")
 Bot:  ARM, in inches:
 You:  37.0
-Bot:  Maximum station weight, in pounds (optional):
-You:  Skip
 Bot:  Station "Front Seats" added.  [Yes] [No] [🗑 Remove last]
 ...  (repeat for Rear Seats, Baggage Area 1, Main Fuel -- Main Fuel additionally asks only for
       max fuel volume in gallons; fuel density is fixed at 6.0 lb/gal (standard avgas) and
@@ -468,6 +466,13 @@ Documented here rather than hidden, per the "no invented behavior" principle of 
   the fixed/adjustable question isn't asked for them at all.
 - **Fuel density is fixed at 6.0 lb/gal (standard avgas) and never asked.** One question fewer
   for a value that's effectively constant across the aircraft this bot targets.
+- **Seats and baggage compartments are never asked for a "maximum station weight."** There's
+  no such published limit for them -- the real constraints are max ramp/takeoff weight and the
+  CG envelope, both already collected separately. Only fuel tanks have a genuine per-station
+  capacity (usable fuel volume), which is still asked. `Station.maximum_weight_lb` remains in
+  the data model and is still enforced by the calculator/recommendation engine if a value is
+  present (e.g. on aircraft configured via the database or an older revision), it's just never
+  prompted for anymore.
 - **A "Front Seats"/"Rear Seats" load entry is the combined weight of everyone at that
   station** (e.g. pilot + front passenger together), not per-person -- the bot has no notion
   of individual seats within a station.

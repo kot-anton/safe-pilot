@@ -104,7 +104,7 @@ async def my_aircraft(message: Message, user: User, aircraft_service: AircraftSe
     if not aircraft_list:
         await message.answer(t("no_aircraft_yet", lang))
         return
-    lines = [t("unverified_banner", lang), ""]
+    lines = [t("my_aircraft_header", lang), ""]
     for a in aircraft_list:
         marker = " ⭐" if user.selected_aircraft_id == a.id else ""
         lines.append(f"- {_aircraft_banner(a, lang)}{marker}")
@@ -154,7 +154,6 @@ async def archive_aircraft_prompt(message: Message, user: User, aircraft_service
 async def archive_aircraft_chosen(
     callback: CallbackQuery, user: User, aircraft_service: AircraftService
 ) -> None:
-    lang = _lang(user)
     aircraft_id = int(callback.data.split(":")[1])
     aircraft = await aircraft_service.get_aircraft(user.id, aircraft_id)
     if aircraft is None:

@@ -66,6 +66,17 @@ def skip_cancel_keyboard(lang: str, *, show_keep: bool = False, show_back: bool 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def zero_cancel_keyboard(lang: str, *, show_back: bool = True) -> InlineKeyboardMarkup:
+    """For mandatory-but-sometimes-zero fields (e.g. a station with nobody in it): unlike
+    skip_cancel_keyboard, this is not an optional field being skipped -- the pilot is recording
+    a real answer of zero, so the button says "0" rather than "Skip"."""
+    row = [InlineKeyboardButton(text="0", callback_data="wizard:skip")]
+    if show_back:
+        row.append(BACK_BUTTON)
+    row.append(InlineKeyboardButton(text=t("btn_cancel", lang), callback_data="wizard:cancel"))
+    return InlineKeyboardMarkup(inline_keyboard=[row])
+
+
 def keep_cancel_keyboard(lang: str, *, show_keep: bool = False, show_back: bool = True) -> InlineKeyboardMarkup:
     """For required fields: no Skip, but Keep current is offered in update mode."""
     rows = []
@@ -93,18 +104,6 @@ def confirm_keyboard(lang: str, *, show_back: bool = True) -> InlineKeyboardMark
         row.append(BACK_BUTTON)
     row.append(InlineKeyboardButton(text=t("btn_cancel", lang), callback_data="wizard:cancel"))
     return InlineKeyboardMarkup(inline_keyboard=[row])
-
-
-def yes_no_keyboard(lang: str, *, show_back: bool = True) -> InlineKeyboardMarkup:
-    rows = [
-        [
-            InlineKeyboardButton(text=t("btn_yes", lang), callback_data="wizard:yes"),
-            InlineKeyboardButton(text=t("btn_no", lang), callback_data="wizard:no"),
-        ]
-    ]
-    if show_back:
-        rows.append([BACK_BUTTON])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def cg_or_moment_keyboard(lang: str, *, show_keep: bool = False, show_back: bool = True) -> InlineKeyboardMarkup:

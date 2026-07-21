@@ -3,7 +3,7 @@ from decimal import Decimal as D
 from app.domain.calculator import calculate
 from app.domain.envelope import LimitStatus
 from app.domain.models import CalculationInput, FuelStationInput, LoadItemInput
-from app.domain.recommendations import RecommendationKind, generate_recommendations
+from app.domain.recommendations import Recommendation, RecommendationKind, generate_recommendations
 from tests.conftest import make_test_profile
 
 
@@ -40,6 +40,40 @@ def test_recommendation_reduces_fuel_for_overweight():
     )
     fixed_result = calculate(profile, fixed_input)
     assert fixed_result.overall_status != LimitStatus.OUT_OF_LIMITS
+
+    # The recommendation should state a concrete tank reading the pilot can act on (a fuel
+    # gauge/tab level), not just an abstract delta.
+    assert rec.resulting_gal is not None
+    assert rec.tank_capacity_gal is not None
+    assert "Target level" in rec.describe()
+
+
+def test_add_fuel_recommendation_flags_full_tank_target():
+    rec = Recommendation(
+        kind=RecommendationKind.ADD_FUEL,
+        station_id="main_fuel",
+        station_name="Main Fuel",
+        delta_lb=D("60"),
+        delta_gal=D("10"),
+        resulting_gal=D("40"),
+        tank_capacity_gal=D("40"),
+    )
+    assert "full" in rec.describe().lower()
+    assert "40.0 gal" in rec.describe()
+
+
+def test_add_fuel_recommendation_states_target_level_when_not_full():
+    rec = Recommendation(
+        kind=RecommendationKind.ADD_FUEL,
+        station_id="main_fuel",
+        station_name="Main Fuel",
+        delta_lb=D("60"),
+        delta_gal=D("10"),
+        resulting_gal=D("30"),
+        tank_capacity_gal=D("40"),
+    )
+    assert "full" not in rec.describe().lower()
+    assert "Target level: 30.0 gal" in rec.describe()
 
 
 def test_recommendation_reduces_baggage_for_overweight():
@@ -162,9 +196,10 @@ def test_recommendation_never_reduces_fuel_below_pilot_minimum():
         assert remaining >= D("39.9")
 
 
-def test_recommendation_moves_weight_from_front_to_rear_seats():
-    """Front-heavy loading pushes CG forward of the limit; moving some of that weight to the
-    rear seats should be offered, respecting the actual seat station (not baggage)."""
+def test_recommendation_never_moves_weight_out_of_front_seats():
+    """Front Seats is always occupied by required crew (pilot, and an instructor in a
+    side-by-side trainer) -- even when front-heavy loading pushes CG forward of the limit,
+    the solver must never suggest reseating them, since that isn't a real option."""
     from app.domain.envelope import CGEnvelope, EnvelopeRow
     from app.domain.models import AircraftProfile, StationProfile, StationType
 
@@ -202,21 +237,67 @@ def test_recommendation_moves_weight_from_front_to_rear_seats():
 
     recs = generate_recommendations(profile, calc_input)
     move_recs = [r for r in recs if r.kind == RecommendationKind.MOVE_LOAD]
-    assert move_recs
-    assert move_recs[0].station_id == "front"
-    assert move_recs[0].target_station_id == "rear"
-    assert "occupant" in move_recs[0].note.lower()
+    assert not any(r.station_id == "front" for r in move_recs)
+    assert not any(r.target_station_id == "front" for r in move_recs)
 
-    rec = move_recs[0]
-    fixed_input = CalculationInput(
-        loads=[
-            LoadItemInput(station_id="front", weight_lb=D("500") - rec.delta_lb),
-            LoadItemInput(station_id="rear", weight_lb=rec.delta_lb),
+
+def test_recommendation_shifts_fuel_between_tanks_to_fix_forward_cg():
+    """A forward-CG problem can sometimes be fixed by moving fuel from a forward tank to an
+    aft tank, leaving total fuel (and total weight) unchanged -- a real, always-available fix
+    distinct from adding/reducing fuel or reseating anyone."""
+    from app.domain.envelope import CGEnvelope, EnvelopeRow
+    from app.domain.models import AircraftProfile, StationProfile, StationType
+
+    profile = AircraftProfile(
+        tail_number="N88888",
+        revision_number=1,
+        basic_empty_weight_lb=D("1000"),
+        basic_empty_moment_lb_in=D("50000"),  # cg 50.0
+        max_takeoff_weight_lb=D("2000"),
+        stations=[
+            StationProfile(
+                station_id="front", name="Front Seats", station_type=StationType.FRONT_SEATS,
+                default_arm_in=D("30"),
+            ),
+            StationProfile(
+                station_id="main", name="Main Fuel", station_type=StationType.FUEL,
+                default_arm_in=D("20"), maximum_volume_gal=D("20"), fuel_density_lb_per_gal=D("6"),
+            ),
+            StationProfile(
+                station_id="aux", name="Aux Fuel", station_type=StationType.FUEL,
+                default_arm_in=D("80"), maximum_volume_gal=D("30"), fuel_density_lb_per_gal=D("6"),
+            ),
         ],
-        fuel=calc_input.fuel,
+        envelope=CGEnvelope([EnvelopeRow(D("1200"), D("45"), D("55")), EnvelopeRow(D("2000"), D("45"), D("55"))]),
+    )
+    calc_input = CalculationInput(
+        loads=[LoadItemInput(station_id="front", weight_lb=D("500"))],
+        fuel=[
+            FuelStationInput(station_id="main", starting_gal=D("20")),
+            FuelStationInput(station_id="aux", starting_gal=D("0")),
+        ],
+    )
+    result = calculate(profile, calc_input)
+    assert result.ramp.cg_check.status == LimitStatus.OUT_OF_LIMITS  # forward of limit
+
+    recs = generate_recommendations(profile, calc_input)
+    shift_recs = [r for r in recs if r.kind == RecommendationKind.SHIFT_FUEL]
+    assert shift_recs, "expected at least one fuel-shift recommendation"
+    rec = shift_recs[0]
+    assert rec.station_id == "main"
+    assert rec.target_station_id == "aux"
+
+    fixed_input = CalculationInput(
+        loads=calc_input.loads,
+        fuel=[
+            FuelStationInput(station_id="main", starting_gal=D("20") - rec.delta_gal),
+            FuelStationInput(station_id="aux", starting_gal=rec.delta_gal),
+        ],
     )
     fixed_result = calculate(profile, fixed_input)
     assert fixed_result.overall_status != LimitStatus.OUT_OF_LIMITS
+    # Total fuel on board -- and therefore total weight -- must be unchanged by a shift.
+    assert fixed_result.ramp.total_weight_lb == result.ramp.total_weight_lb
 
 
 def test_recommendations_preserve_category_priority_over_raw_delta():

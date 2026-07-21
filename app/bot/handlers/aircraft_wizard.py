@@ -40,7 +40,6 @@ from app.bot.keyboards.common import (
     skip_cancel_keyboard,
     station_name_keyboard,
     station_type_keyboard,
-    yes_no_keyboard,
 )
 from app.bot.states.aircraft_wizard import AircraftWizard
 from app.bot.texts.i18n import t
@@ -130,8 +129,6 @@ async def render_empty_moment(message: Message, state: FSMContext, user: User) -
     await message.answer(t("ask_empty_moment", _lang(user)), reply_markup=cancel_only_keyboard(_lang(user)))
 
 
-async def render_confirm_empty_record(message: Message, state: FSMContext, user: User) -> None:
-    await message.answer(t("confirm_empty_wb_record", _lang(user)), reply_markup=yes_no_keyboard(_lang(user)))
 
 
 async def render_max_ramp_weight(message: Message, state: FSMContext, user: User) -> None:
@@ -240,10 +237,6 @@ async def render_station_max_arm(message: Message, state: FSMContext, user: User
     await message.answer(t("ask_station_max_arm", _lang(user)), reply_markup=cancel_only_keyboard(_lang(user)))
 
 
-async def render_station_max_weight(message: Message, state: FSMContext, user: User) -> None:
-    await message.answer(t("ask_station_max_weight", _lang(user)), reply_markup=skip_cancel_keyboard(_lang(user)))
-
-
 async def render_station_fuel_max_volume(message: Message, state: FSMContext, user: User) -> None:
     await message.answer(t("ask_fuel_max_volume", _lang(user)), reply_markup=cancel_only_keyboard(_lang(user)))
 
@@ -302,7 +295,6 @@ RENDERERS: dict[str, "callable"] = {
     AircraftWizard.cg_or_moment_choice.state: render_cg_or_moment_choice,
     AircraftWizard.empty_cg.state: render_empty_cg,
     AircraftWizard.empty_moment.state: render_empty_moment,
-    AircraftWizard.confirm_empty_record.state: render_confirm_empty_record,
     AircraftWizard.max_ramp_weight.state: render_max_ramp_weight,
     AircraftWizard.max_takeoff_weight.state: render_max_takeoff_weight,
     AircraftWizard.max_landing_weight.state: render_max_landing_weight,
@@ -315,7 +307,6 @@ RENDERERS: dict[str, "callable"] = {
     AircraftWizard.station_arm_mode.state: render_station_arm_mode,
     AircraftWizard.station_min_arm.state: render_station_min_arm,
     AircraftWizard.station_max_arm.state: render_station_max_arm,
-    AircraftWizard.station_max_weight.state: render_station_max_weight,
     AircraftWizard.station_fuel_max_volume.state: render_station_fuel_max_volume,
     AircraftWizard.envelope_rows.state: render_envelope_rows,
     AircraftWizard.source_doc_name.state: render_source_doc_name,
@@ -483,9 +474,23 @@ async def choose_know_moment(callback: CallbackQuery, state: FSMContext, user: U
     await callback.answer()
 
 
+async def _advance_past_empty_record(message: Message, state: FSMContext, user: User) -> None:
+    data = await state.get_data()
+    if _is_quick(data):
+        await state.update_data(
+            max_ramp_weight_lb=None,
+            max_landing_weight_lb=None,
+            max_zero_fuel_weight_lb=None,
+            known_useful_load_lb=None,
+        )
+        await goto(message, state, user, AircraftWizard.max_takeoff_weight, render_max_takeoff_weight)
+    else:
+        await goto(message, state, user, AircraftWizard.max_ramp_weight, render_max_ramp_weight)
+
+
 @router.callback_query(AircraftWizard.cg_or_moment_choice, F.data == "wizard:keep_cg_moment")
 async def keep_cg_moment(callback: CallbackQuery, state: FSMContext, user: User) -> None:
-    await goto(callback.message, state, user, AircraftWizard.confirm_empty_record, render_confirm_empty_record)
+    await _advance_past_empty_record(callback.message, state, user)
     await callback.answer()
 
 
@@ -501,7 +506,7 @@ async def got_empty_cg(message: Message, state: FSMContext, user: User) -> None:
     weight = Decimal(data["basic_empty_weight_lb"])
     moment = weight * cg
     await state.update_data(basic_empty_cg_in=str(cg), basic_empty_moment_lb_in=str(moment))
-    await goto(message, state, user, AircraftWizard.confirm_empty_record, render_confirm_empty_record)
+    await _advance_past_empty_record(message, state, user)
 
 
 @router.message(AircraftWizard.empty_moment)
@@ -516,35 +521,7 @@ async def got_empty_moment(message: Message, state: FSMContext, user: User) -> N
     weight = Decimal(data["basic_empty_weight_lb"])
     cg = moment / weight
     await state.update_data(basic_empty_cg_in=str(cg), basic_empty_moment_lb_in=str(moment))
-    await goto(message, state, user, AircraftWizard.confirm_empty_record, render_confirm_empty_record)
-
-
-@router.callback_query(AircraftWizard.confirm_empty_record, F.data == "wizard:yes")
-async def confirm_empty_record_yes(callback: CallbackQuery, state: FSMContext, user: User) -> None:
-    data = await state.get_data()
-    if _is_quick(data):
-        await state.update_data(
-            max_ramp_weight_lb=None,
-            max_landing_weight_lb=None,
-            max_zero_fuel_weight_lb=None,
-            known_useful_load_lb=None,
-        )
-        await goto(callback.message, state, user, AircraftWizard.max_takeoff_weight, render_max_takeoff_weight)
-    else:
-        await goto(callback.message, state, user, AircraftWizard.max_ramp_weight, render_max_ramp_weight)
-    await callback.answer()
-
-
-@router.callback_query(AircraftWizard.confirm_empty_record, F.data == "wizard:no")
-async def confirm_empty_record_no(callback: CallbackQuery, state: FSMContext, user: User) -> None:
-    # Declining means the empty weight/CG/moment doesn't match their actual W&B record --
-    # send them back to fix the number rather than discarding the whole wizard.
-    await callback.message.answer(
-        "Let's fix that -- please re-enter the empty weight and CG/moment so they match your "
-        "aircraft's current Weight & Balance record."
-    )
-    await go_back(callback.message, state, user, RENDERERS, _cannot_go_back)
-    await callback.answer()
+    await _advance_past_empty_record(message, state, user)
 
 
 # ---------------------------------------------------------------------------
@@ -791,11 +768,14 @@ async def got_station_arm(message: Message, state: FSMContext, user: User) -> No
 
 
 async def _after_arm_configured(message: Message, state: FSMContext, user: User) -> None:
+    # Seats and baggage compartments have no published "maximum station weight" -- the real
+    # constraints are max ramp/takeoff weight and the CG envelope, both already collected
+    # separately. Only fuel tanks have a real per-station capacity (usable fuel volume).
     data = await state.get_data()
     if data["current_station_type"] == StationType.FUEL.value:
         await goto(message, state, user, AircraftWizard.station_fuel_max_volume, render_station_fuel_max_volume)
     else:
-        await goto(message, state, user, AircraftWizard.station_max_weight, render_station_max_weight)
+        await _finalize_station(message, state, user, max_weight=None)
 
 
 @router.callback_query(AircraftWizard.station_arm_mode, F.data == "wizard:arm_fixed")
@@ -839,23 +819,6 @@ async def got_station_max_arm(message: Message, state: FSMContext, user: User) -
         return
     await state.update_data(current_station_max_arm=str(value))
     await _after_arm_configured(message, state, user)
-
-
-@router.message(AircraftWizard.station_max_weight)
-async def got_station_max_weight(message: Message, state: FSMContext, user: User) -> None:
-    lang = _lang(user)
-    try:
-        value = parse_optional_decimal(message.text)
-    except InputParseError as exc:
-        await message.answer(t("error_generic", lang, detail=str(exc)))
-        return
-    await _finalize_station(message, state, user, max_weight=value)
-
-
-@router.callback_query(AircraftWizard.station_max_weight, F.data == "wizard:skip")
-async def skip_station_max_weight(callback: CallbackQuery, state: FSMContext, user: User) -> None:
-    await callback.answer()
-    await _finalize_station(callback.message, state, user, max_weight=None)
 
 
 @router.message(AircraftWizard.station_fuel_max_volume)

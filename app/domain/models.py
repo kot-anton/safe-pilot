@@ -1,12 +1,12 @@
 """Pure domain data model for weight & balance. No aiogram or SQLAlchemy imports allowed here."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from decimal import Decimal
 from enum import Enum
 
 from app.domain.envelope import CGCheckResult, CGEnvelope, LimitStatus
-from app.domain.exceptions import InvalidInputError, InvalidStationError
+from app.domain.exceptions import InvalidStationError
 
 
 class StationType(str, Enum):
