@@ -14,13 +14,7 @@ from enum import Enum
 from app.domain.calculator import calculate
 from app.domain.envelope import LimitStatus
 from app.domain.exceptions import DomainError
-from app.domain.models import (
-    AircraftProfile,
-    CalculationInput,
-    FuelStationInput,
-    LoadItemInput,
-    StationType,
-)
+from app.domain.models import AircraftProfile, CalculationInput, StationType
 from app.domain.units import lb_to_kg
 
 FUEL_STEP_GAL = Decimal("0.1")
@@ -32,6 +26,7 @@ class RecommendationKind(str, Enum):
     ADD_FUEL = "ADD_FUEL"
     REDUCE_BAGGAGE = "REDUCE_BAGGAGE"
     MOVE_LOAD = "MOVE_LOAD"
+    SHIFT_FUEL = "SHIFT_FUEL"
 
 
 @dataclass(frozen=True)
@@ -44,18 +39,32 @@ class Recommendation:
     target_station_id: str | None = None
     target_station_name: str | None = None
     note: str | None = None
+    # Only set for REDUCE_FUEL/ADD_FUEL: the tank's level after applying this adjustment, and
+    # its full usable capacity -- lets the pilot act on a real fuel-gauge/tab reading ("fill to
+    # 53 gal") instead of a precise, hard-to-measure-at-the-pump delta.
+    resulting_gal: Decimal | None = None
+    tank_capacity_gal: Decimal | None = None
 
     def describe(self) -> str:
         if self.kind == RecommendationKind.REDUCE_FUEL:
-            return (
+            text = (
                 f"Reduce fuel in {self.station_name} by {self.delta_gal:.1f} US gal "
                 f"({self.delta_lb:.1f} lb)."
             )
+            if self.resulting_gal is not None:
+                text += f" Target level: {self.resulting_gal:.1f} gal."
+            return text
         if self.kind == RecommendationKind.ADD_FUEL:
-            return (
+            text = (
                 f"Add fuel to {self.station_name}: +{self.delta_gal:.1f} US gal "
                 f"(+{self.delta_lb:.1f} lb)."
             )
+            if self.resulting_gal is not None:
+                if self.tank_capacity_gal is not None and self.resulting_gal >= self.tank_capacity_gal:
+                    text += f" Target level: fill to full ({self.resulting_gal:.1f} gal)."
+                else:
+                    text += f" Target level: {self.resulting_gal:.1f} gal."
+            return text
         if self.kind == RecommendationKind.REDUCE_BAGGAGE:
             kg = lb_to_kg(self.delta_lb)
             return f"Reduce load at {self.station_name} by {self.delta_lb:.1f} lb ({kg:.1f} kg)."
@@ -64,6 +73,11 @@ class Recommendation:
             return (
                 f"Move {self.delta_lb:.1f} lb ({kg:.1f} kg) from {self.station_name} "
                 f"to {self.target_station_name}."
+            )
+        if self.kind == RecommendationKind.SHIFT_FUEL:
+            return (
+                f"Shift {self.delta_gal:.1f} US gal of fuel from {self.station_name} "
+                f"to {self.target_station_name} (total fuel on board unchanged)."
             )
         return "Adjustment."
 
@@ -134,6 +148,8 @@ def _search_reduce_fuel(
                         station_name=station.name,
                         delta_lb=delta_lb,
                         delta_gal=delta_gal,
+                        resulting_gal=candidate_gal,
+                        tank_capacity_gal=station.maximum_volume_gal,
                     )
                 )
                 break
@@ -162,9 +178,51 @@ def _search_add_fuel(profile: AircraftProfile, calc_input: CalculationInput) -> 
                         station_name=station.name,
                         delta_lb=delta_lb,
                         delta_gal=delta_gal,
+                        resulting_gal=candidate_gal,
+                        tank_capacity_gal=station.maximum_volume_gal,
                     )
                 )
                 break
+    return results
+
+
+def _search_shift_fuel(
+    profile: AircraftProfile, calc_input: CalculationInput, min_fuel_gal: dict[str, Decimal]
+) -> list[Recommendation]:
+    """Redistributes fuel between two tanks (e.g. main/aux) with total fuel on board held
+    constant -- a real, always-available fix distinct from reducing or adding fuel, since it
+    shifts CG without touching total weight or endurance."""
+    results = []
+    for source in calc_input.fuel:
+        floor = min_fuel_gal.get(source.station_id, Decimal("0"))
+        if source.starting_gal <= floor:
+            continue
+        for dest in calc_input.fuel:
+            if dest.station_id == source.station_id:
+                continue
+            dest_station = profile.station(dest.station_id)
+            headroom_gal = min(source.starting_gal - floor, dest_station.maximum_volume_gal - dest.starting_gal)
+            if headroom_gal <= 0:
+                continue
+            source_station = profile.station(source.station_id)
+            steps = int(headroom_gal / FUEL_STEP_GAL)
+            for step in range(1, min(steps, MAX_STEPS) + 1):
+                delta_gal = FUEL_STEP_GAL * step
+                candidate_input = _replace_fuel(calc_input, source.station_id, source.starting_gal - delta_gal)
+                candidate_input = _replace_fuel(candidate_input, dest.station_id, dest.starting_gal + delta_gal)
+                result = _try_calculate(profile, candidate_input)
+                if result and _is_acceptable(result.overall_status):
+                    results.append(
+                        Recommendation(
+                            kind=RecommendationKind.SHIFT_FUEL,
+                            station_id=source.station_id,
+                            station_name=source_station.name,
+                            target_station_id=dest.station_id,
+                            target_station_name=dest_station.name,
+                            delta_gal=delta_gal,
+                        )
+                    )
+                    break
     return results
 
 
@@ -204,8 +262,13 @@ PASSENGER_MOVE_NOTE = (
 def _search_move_passengers(profile: AircraftProfile, calc_input: CalculationInput) -> list[Recommendation]:
     """Front/rear seat inputs are aggregated occupant totals, not individual people -- so a
     'move weight' recommendation here means reseating occupants between rows (e.g. moving a
-    passenger to the back seat), not fractionally splitting a person."""
-    seat_types = {StationType.FRONT_SEATS, StationType.REAR_SEATS}
+    passenger to the back seat), not fractionally splitting a person.
+
+    Front Seats is deliberately excluded as a source or destination: it's always occupied by
+    required crew (the pilot, and an instructor in a side-by-side trainer), who cannot be
+    reseated to fix a W&B problem. Only remaining seat rows (e.g. a second/third row of Rear
+    Seats stations) are considered movable."""
+    seat_types = {StationType.REAR_SEATS}
     seat_stations = [s for s in profile.stations if s.station_type in seat_types]
     results = []
     for source in seat_stations:
@@ -285,9 +348,10 @@ def _search_move_load(profile: AircraftProfile, calc_input: CalculationInput) ->
 
 _CATEGORY_PRIORITY = {
     RecommendationKind.MOVE_LOAD: 0,
-    RecommendationKind.REDUCE_BAGGAGE: 1,
-    RecommendationKind.REDUCE_FUEL: 2,
-    RecommendationKind.ADD_FUEL: 3,
+    RecommendationKind.SHIFT_FUEL: 1,
+    RecommendationKind.REDUCE_BAGGAGE: 2,
+    RecommendationKind.REDUCE_FUEL: 3,
+    RecommendationKind.ADD_FUEL: 4,
 }
 
 
@@ -299,9 +363,9 @@ def generate_recommendations(
 ) -> list[Recommendation]:
     """Returns up to `max_results` verified, mathematically valid load adjustments.
 
-    Search proceeds in the required preference order (move passengers/load, reduce baggage,
-    reduce fuel, add fuel). That category order is the primary sort key --
-    smallest-change-first is only the tiebreaker *within* a category, so e.g. a 2 lb fuel
+    Search proceeds in the required preference order (move passengers/load, shift fuel between
+    tanks, reduce baggage, reduce fuel, add fuel). That category order is the primary sort key
+    -- smallest-change-first is only the tiebreaker *within* a category, so e.g. a 2 lb fuel
     reduction never displaces a 1 lb load move from its preferred position.
     """
     min_fuel_gal = min_fuel_gal or {}
@@ -309,14 +373,17 @@ def generate_recommendations(
     ordered_candidates: list[Recommendation] = []
     ordered_candidates += _search_move_passengers(profile, calc_input)
     ordered_candidates += _search_move_load(profile, calc_input)
+    ordered_candidates += _search_shift_fuel(profile, calc_input, min_fuel_gal)
     ordered_candidates += _search_reduce_baggage(profile, calc_input)
     ordered_candidates += _search_reduce_fuel(profile, calc_input, min_fuel_gal)
     ordered_candidates += _search_add_fuel(profile, calc_input)
 
-    ordered_candidates.sort(
-        key=lambda r: (
-            _CATEGORY_PRIORITY.get(r.kind, 99),
-            r.delta_lb if r.delta_lb is not None else Decimal("0"),
-        )
-    )
+    def _tiebreak(r: Recommendation) -> Decimal:
+        if r.delta_lb is not None:
+            return r.delta_lb
+        if r.delta_gal is not None:
+            return r.delta_gal
+        return Decimal("0")
+
+    ordered_candidates.sort(key=lambda r: (_CATEGORY_PRIORITY.get(r.kind, 99), _tiebreak(r)))
     return ordered_candidates[:max_results]

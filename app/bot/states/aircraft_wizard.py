@@ -10,7 +10,6 @@ class AircraftWizard(StatesGroup):
     cg_or_moment_choice = State()
     empty_cg = State()
     empty_moment = State()
-    confirm_empty_record = State()
     max_ramp_weight = State()
     max_takeoff_weight = State()
     max_landing_weight = State()
@@ -24,7 +23,6 @@ class AircraftWizard(StatesGroup):
     station_arm_mode = State()
     station_min_arm = State()
     station_max_arm = State()
-    station_max_weight = State()
     station_fuel_max_volume = State()
 
     envelope_rows = State()

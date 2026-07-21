@@ -71,18 +71,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "Basic Empty Moment, in pound-inches:",
         "ru": "Момент пустого ВС, в фунто-дюймах:",
     },
-    "confirm_empty_wb_record": {
-        "en": (
-            "The entered Basic Empty Weight and Moment/CG are taken from the aircraft's current "
-            "Weight & Balance record, and all required installed equipment, operating fluids, "
-            "and unusable fuel are represented according to that record."
-        ),
-        "ru": (
-            "Введённые базовый вес пустого ВС и момент/центровка взяты из актуальной "
-            "документации по центровке ВС, и всё необходимое установленное оборудование, "
-            "эксплуатационные жидкости и невырабатываемое топливо учтены согласно этой документации."
-        ),
-    },
     "ask_max_ramp_weight": {
         "en": "Maximum Ramp Weight, in pounds (optional, Skip if not published):",
         "ru": "Максимальный вес на рулении (Ramp Weight), в фунтах (необязательно):",
@@ -100,14 +88,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "ru": "Максимальный вес без топлива (ZFW), в фунтах (необязательно):",
     },
     "ask_known_useful_load": {
-        "en": (
-            "Known Useful Load, in pounds (optional). This is only used as a consistency check "
-            "-- it will NOT be used to calculate CG."
-        ),
-        "ru": (
-            "Известная полезная нагрузка, в фунтах (необязательно). Используется только для "
-            "проверки согласованности -- центровка по ней НЕ считается."
-        ),
+        "en": "Known Useful Load, in pounds (optional, consistency check only):",
+        "ru": "Известная полезная нагрузка, в фунтах (необязательно, только для проверки):",
     },
     "useful_load_ok": {
         "en": "Useful load check: entered value matches the calculated useful load.",
@@ -128,10 +110,6 @@ STRINGS: dict[str, dict[str, str]] = {
     "btn_arm_adjustable": {"en": "Adjustable", "ru": "Регулируемое"},
     "ask_station_min_arm": {"en": "Minimum ARM, in inches:", "ru": "Минимальное плечо, в дюймах:"},
     "ask_station_max_arm": {"en": "Maximum ARM, in inches:", "ru": "Максимальное плечо, в дюймах:"},
-    "ask_station_max_weight": {
-        "en": "Maximum station weight, in pounds (optional):",
-        "ru": "Максимальный вес на станции, в фунтах (необязательно):",
-    },
     "ask_fuel_max_volume": {
         "en": "Maximum fuel volume for this tank, in US gallons:",
         "ru": "Максимальный объём топлива в этом баке, в US галлонах:",
@@ -150,43 +128,22 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "New aircraft revision saved. Historical data and past calculations are unaffected.",
         "ru": "Сохранена новая ревизия ВС. Исторические данные и прошлые расчёты не изменены.",
     },
-    "unverified_banner": {
-        "en": "UNVERIFIED -- Calculations use user-entered aircraft values. Aircraft-specific records have not been independently verified.",
-        "ru": "НЕ ПРОВЕРЕНО -- Расчёты используют данные, введённые пользователем. Документы ВС независимо не проверялись.",
-    },
+    "my_aircraft_header": {"en": "Your aircraft:", "ru": "Ваши ВС:"},
     "result_footer": {
         "en": "Based on the saved aircraft profile. Verify against current aircraft records.",
         "ru": "На основе сохранённого профиля ВС. Сверьте с актуальной документацией ВС.",
     },
-    "disclaimer": {
-        "en": (
-            "Weight & Balance calculation only. Verify all values against the current POH/AFM, "
-            "supplements, equipment list, and aircraft-specific Weight & Balance records. Fuel "
-            "planning, aircraft performance, runway, weather, and legal reserve requirements are "
-            "not evaluated."
-        ),
-        "ru": (
-            "Только расчёт центровки и загрузки. Проверьте все значения по актуальным POH/AFM, "
-            "дополнениям, перечню оборудования и документации по центровке ВС. Топливное "
-            "планирование, характеристики ВС, ВПП, погода и требования по резервам топлива не "
-            "оцениваются."
-        ),
-    },
     "select_aircraft_prompt": {"en": "Select an aircraft:", "ru": "Выберите ВС:"},
     "aircraft_selected": {"en": "Active aircraft set.", "ru": "Активное ВС установлено."},
-    "ask_load_at_station": {"en": "Load at {station}, in lb (Enter 0 if none):", "ru": "Нагрузка на {station}, в фунтах (0, если нет):"},
-    "ask_load_at_seat_station": {
-        "en": "Combined weight of all occupants at {station}, in lb (Enter 0 if empty):",
-        "ru": "Суммарный вес всех пассажиров на {station}, в фунтах (0, если пусто):",
-    },
+    "ask_load_at_station": {"en": "{station} weight, in lb:", "ru": "Вес на «{station}», в фунтах:"},
     "ask_fuel_starting": {"en": "Starting fuel in {station}, in US gal:", "ru": "Начальное топливо в {station}, в US гал:"},
     "ask_fuel_enroute": {
-        "en": "Planned enroute fuel burn from {station}, in US gal (optional -- Skip if unknown; landing will then not be evaluated):",
-        "ru": "Плановый расход в полёте из {station}, US гал (необязательно -- без этого посадка не будет оценена):",
+        "en": "Planned fuel burn from {station}, in US gal (Skip = landing not evaluated):",
+        "ru": "Плановый расход из {station}, US гал (Пропустить = посадка не оценивается):",
     },
     "ask_min_fuel": {
-        "en": "Minimum required takeoff fuel in {station}, in US gal (optional, used only to constrain recommendations):",
-        "ru": "Минимально необходимое топливо на взлёт в {station}, US гал (необязательно, используется только для рекомендаций):",
+        "en": "Minimum required fuel in {station}, in US gal (Skip = no minimum applied):",
+        "ru": "Минимально необходимое топливо в {station}, US гал (Пропустить = минимум не задан):",
     },
     "review_flight_inputs": {"en": "Please confirm your inputs:", "ru": "Подтвердите введённые данные:"},
     "calculation_running": {"en": "Calculating...", "ru": "Выполняется расчёт..."},

@@ -21,11 +21,18 @@ from aiogram.types import CallbackQuery, Message
 
 from app.bot.handlers._common import InputParseError, fmt, parse_decimal, parse_optional_decimal
 from app.bot.handlers.wizard_nav import pop_checkpoint, push_checkpoint
-from app.bot.keyboards.common import aircraft_list_keyboard, confirm_keyboard, main_menu_keyboard, skip_cancel_keyboard
+from app.bot.keyboards.common import (
+    aircraft_list_keyboard,
+    confirm_keyboard,
+    main_menu_keyboard,
+    skip_cancel_keyboard,
+    zero_cancel_keyboard,
+)
 from app.bot.states.flight_wizard import FlightWizard
 from app.bot.texts.i18n import t
 from app.database.models import User
 from app.domain.envelope import LimitStatus
+from app.domain.exceptions import DomainError
 from app.domain.models import CalculationInput, FuelStationInput, LoadItemInput, PhaseResult, StationType
 from app.domain.recommendations import Recommendation
 from app.services.aircraft_service import AircraftService
@@ -133,14 +140,8 @@ async def _render_load_prompt(message: Message, state: FSMContext, user: User, i
     station_ids = data["non_fuel_station_ids"]
     station_id = station_ids[index]
     name = data.get("non_fuel_station_names", {}).get(station_id, station_id)
-    station_type = data.get("non_fuel_station_types", {}).get(station_id)
-    prompt_key = (
-        "ask_load_at_seat_station"
-        if station_type in {StationType.FRONT_SEATS.value, StationType.REAR_SEATS.value, StationType.PASSENGER.value}
-        else "ask_load_at_station"
-    )
     await message.answer(
-        t(prompt_key, lang, station=name), reply_markup=skip_cancel_keyboard(lang, show_back=show_back)
+        t("ask_load_at_station", lang, station=name), reply_markup=zero_cancel_keyboard(lang, show_back=show_back)
     )
 
 
@@ -396,7 +397,7 @@ async def flight_review_confirm(
 
     try:
         result = flight_service.run_calculation(profile, calc_input)
-    except Exception as exc:
+    except DomainError as exc:
         await callback.message.answer(t("error_generic", lang, detail=str(exc)))
         await callback.answer()
         return

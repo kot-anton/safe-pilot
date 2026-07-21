@@ -42,7 +42,6 @@ async def update_aircraft_prompt(message: Message, user: User, aircraft_service:
 async def update_aircraft_chosen(
     callback: CallbackQuery, state: FSMContext, user: User, aircraft_service: AircraftService
 ) -> None:
-    lang = _lang(user)
     aircraft_id = int(callback.data.split(":")[1])
     aircraft = await aircraft_service.get_aircraft(user.id, aircraft_id)
     if aircraft is None or aircraft.active_revision_id is None:
@@ -81,6 +80,10 @@ async def update_aircraft_chosen(
     await state.update_data(
         update_mode=True,
         aircraft_id=aircraft.id,
+        tail_number=aircraft.tail_number,
+        model=aircraft.model,
+        nickname=aircraft.nickname,
+        manufacturer=aircraft.manufacturer,
         basic_empty_weight_lb=str(revision.basic_empty_weight_lb),
         basic_empty_cg_in=str(revision.basic_empty_cg_in),
         basic_empty_moment_lb_in=str(revision.basic_empty_moment_lb_in),

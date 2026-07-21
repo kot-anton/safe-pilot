@@ -18,7 +18,8 @@ from app.bot.states.quick_calc_wizard import QuickCalcWizard
 from app.bot.texts.i18n import t
 from app.database.models import User
 from app.domain.envelope import LimitStatus
-from app.domain.fuel_allocation import FuelRangeStatus, FuelTankSpec
+from app.domain.exceptions import DomainError
+from app.domain.fuel_allocation import FuelRangeStatus
 from app.domain.models import CalculationInput, FuelStationInput, LoadItemInput, StationType
 from app.domain.quick_calculation import QuickCalculationResult, run_quick_calculation
 from app.services.aircraft_service import AircraftService, build_domain_profile
@@ -361,12 +362,12 @@ async def _show_confirmation(message: Message, state: FSMContext, user: User) ->
     data = await state.get_data()
     lines = [data["tail_number"], ""]
     if data["has_front"]:
-        lines.append(f"Front: {data['front_lb']} lb")
+        lines.append(f"Front: {fmt(Decimal(data['front_lb']), ' lb')}")
     if data["has_rear"]:
-        lines.append(f"Rear: {data['rear_lb']} lb")
+        lines.append(f"Rear: {fmt(Decimal(data['rear_lb']), ' lb')}")
     if data["has_baggage"]:
-        lines.append(f"Baggage: {data['baggage_lb']} lb")
-    lines.append(f"Fuel: {data['total_fuel_gal']} gal")
+        lines.append(f"Baggage: {fmt(Decimal(data['baggage_lb']), ' lb')}")
+    lines.append(f"Fuel: {fmt(Decimal(data['total_fuel_gal']), ' gal')}")
     await state.set_state(QuickCalcWizard.review)
     await message.answer("\n".join(lines), reply_markup=_confirm_keyboard(_lang(user)))
 
@@ -485,7 +486,7 @@ async def quick_calculate_confirm(
             baggage_lb=Decimal(data["baggage_lb"]),
             total_fuel_gal=Decimal(data["total_fuel_gal"]),
         )
-    except Exception as exc:
+    except DomainError as exc:
         await callback.message.answer(t("error_generic", lang, detail=str(exc)))
         await callback.answer()
         return

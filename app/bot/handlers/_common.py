@@ -46,7 +46,12 @@ def parse_optional_date(text: str) -> datetime.date | None:
 
 
 def fmt(value: Decimal | None, unit: str = "") -> str:
+    """Rounds to one decimal place and drops it when it's just a trailing zero, so a stored
+    Decimal("53.0000") reads as "53 gal" rather than "53.0000 gal", but "53.5" is preserved."""
     if value is None:
         return "not set"
     quantized = value.quantize(Decimal("0.1"))
-    return f"{quantized}{unit}"
+    text = f"{quantized}"
+    if text.endswith(".0"):
+        text = text[:-2]
+    return f"{text}{unit}"
