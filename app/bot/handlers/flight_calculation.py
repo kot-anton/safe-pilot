@@ -18,7 +18,13 @@ from aiogram import F, Router
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State
-from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    ReplyKeyboardRemove,
+)
 
 from app.bot.handlers._common import InputParseError, fmt, parse_decimal
 from app.bot.handlers.wizard_nav import pop_checkpoint, push_checkpoint
@@ -27,7 +33,6 @@ from app.bot.keyboards.common import (
     confirm_keyboard,
     main_menu_keyboard,
     skip_cancel_keyboard,
-    zero_cancel_keyboard,
 )
 from app.bot.states.flight_wizard import FlightWizard
 from app.bot.texts.i18n import t
@@ -58,8 +63,143 @@ async def _load_profile_and_aircraft(user_id: int, aircraft_id: int, aircraft_se
     return aircraft, build_domain_profile(revision, aircraft)
 
 
+def _history_decimal(value, *, allow_negative: bool = False) -> str | None:
+    """Return a safe, canonical decimal from a stored history snapshot."""
+    try:
+        decimal = Decimal(str(value))
+    except (ArithmeticError, TypeError, ValueError):
+        return None
+    if not decimal.is_finite() or (not allow_negative and decimal < 0):
+        return None
+    return str(decimal)
+
+
+async def _last_advanced_input(
+    user_id: int, aircraft_id: int, flight_service: FlightService
+) -> dict | None:
+    """Load the latest valid full-calculation values for station-aware shortcuts.
+
+    History may include Quick calculations and legacy/malformed snapshots. Only a structured
+    Advanced snapshot is considered, and callers still match values against the current
+    aircraft's station IDs and limits before offering them.
+    """
+    history = await flight_service.list_history(user_id, aircraft_id, limit=10)
+    for calculation in history:
+        if str(getattr(calculation, "calculation_engine_version", "")).endswith(
+            "-quick"
+        ):
+            continue
+        try:
+            snapshot = json.loads(calculation.input_snapshot_json)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(snapshot, dict):
+            continue
+        load_items = snapshot.get("loads")
+        fuel_items = snapshot.get("fuel")
+        if not isinstance(load_items, list) or not isinstance(fuel_items, list):
+            continue
+
+        loads: dict[str, str] = {}
+        load_arms: dict[str, str] = {}
+        fuel_starting: dict[str, str] = {}
+        for item in load_items:
+            if not isinstance(item, dict) or not isinstance(item.get("station_id"), str):
+                continue
+            station_id = item["station_id"]
+            weight = _history_decimal(item.get("weight_lb"))
+            arm = _history_decimal(item.get("arm_in"), allow_negative=True)
+            if weight is not None:
+                loads[station_id] = weight
+            if arm is not None:
+                load_arms[station_id] = arm
+        for item in fuel_items:
+            if not isinstance(item, dict) or not isinstance(item.get("station_id"), str):
+                continue
+            starting = _history_decimal(item.get("starting_gal"))
+            if starting is not None:
+                fuel_starting[item["station_id"]] = starting
+        return {
+            "loads": loads,
+            "load_arms": load_arms,
+            "fuel_starting": fuel_starting,
+        }
+    return None
+
+
+def _load_keyboard(
+    lang: str,
+    *,
+    last_value: str | None,
+    last_arm: str | None,
+    adjustable: bool,
+    show_back: bool,
+) -> InlineKeyboardMarkup:
+    rows = []
+    if last_value is not None and (not adjustable or last_arm is not None):
+        unit = "lb" if not adjustable else f"lb @ {last_arm} in"
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=t("btn_use_last", lang, value=last_value, unit=unit),
+                    callback_data="flight:use_last_load",
+                )
+            ]
+        )
+    footer = []
+    if show_back:
+        footer.append(
+            InlineKeyboardButton(text=t("btn_back", lang), callback_data="wizard:back")
+        )
+    footer.append(
+        InlineKeyboardButton(text=t("btn_cancel", lang), callback_data="wizard:cancel")
+    )
+    rows.append(footer)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _fuel_start_keyboard(
+    lang: str,
+    *,
+    capacity: Decimal,
+    last_value: str | None,
+    show_back: bool = True,
+) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=t("btn_full_tank", lang, value=fmt(capacity, " gal")),
+                callback_data="flight:full_fuel",
+            )
+        ]
+    ]
+    if last_value is not None and Decimal(last_value) <= capacity:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=t("btn_use_last", lang, value=last_value, unit="gal"),
+                    callback_data="flight:use_last_fuel",
+                )
+            ]
+        )
+    footer = []
+    if show_back:
+        footer.append(
+            InlineKeyboardButton(text=t("btn_back", lang), callback_data="wizard:back")
+        )
+    footer.append(
+        InlineKeyboardButton(text=t("btn_cancel", lang), callback_data="wizard:cancel")
+    )
+    rows.append(footer)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 async def start_calculation(
-    message: Message, state: FSMContext, user: User, aircraft_service: AircraftService
+    message: Message,
+    state: FSMContext,
+    user: User,
+    aircraft_service: AircraftService,
+    flight_service: FlightService,
 ) -> None:
     """The full per-tank/per-station "Advanced" calculation -- optional enroute burn,
     exact per-tank amounts, ramp/takeoff/landing. Reached through the calculation-mode choice
@@ -68,7 +208,14 @@ async def start_calculation(
     lang = _lang(user)
     await state.clear()
     if user.selected_aircraft_id:
-        await _begin_for_aircraft(message, state, user, aircraft_service, user.selected_aircraft_id)
+        await _begin_for_aircraft(
+            message,
+            state,
+            user,
+            aircraft_service,
+            flight_service,
+            user.selected_aircraft_id,
+        )
         return
     aircraft_list = await aircraft_service.list_aircraft(user.id)
     if not aircraft_list:
@@ -82,23 +229,47 @@ async def start_calculation(
 
 @router.callback_query(F.data == "quick:advanced")
 async def advanced_from_quick(
-    callback: CallbackQuery, state: FSMContext, user: User, aircraft_service: AircraftService
+    callback: CallbackQuery,
+    state: FSMContext,
+    user: User,
+    aircraft_service: AircraftService,
+    flight_service: FlightService,
 ) -> None:
     await callback.answer()
-    await start_calculation(callback.message, state, user, aircraft_service)
+    await start_calculation(
+        callback.message, state, user, aircraft_service, flight_service
+    )
 
 
 @router.callback_query(FlightWizard.select_aircraft, F.data.startswith("calc_select:"))
 async def calc_select_aircraft(
-    callback: CallbackQuery, state: FSMContext, user: User, aircraft_service: AircraftService
+    callback: CallbackQuery,
+    state: FSMContext,
+    user: User,
+    aircraft_service: AircraftService,
+    flight_service: FlightService,
 ) -> None:
     aircraft_id = int(callback.data.split(":")[1])
-    await _begin_for_aircraft(callback.message, state, user, aircraft_service, aircraft_id)
+    await _begin_for_aircraft(
+        callback.message,
+        state,
+        user,
+        aircraft_service,
+        flight_service,
+        aircraft_id,
+    )
     await callback.answer()
 
 
 async def _begin_for_aircraft(
-    message: Message, state: FSMContext, user: User, aircraft_service: AircraftService, aircraft_id: int
+    message: Message,
+    state: FSMContext,
+    user: User,
+    aircraft_service: AircraftService,
+    flight_service: FlightService,
+    aircraft_id: int,
+    *,
+    seed_values: dict | None = None,
 ) -> None:
     lang = _lang(user)
     try:
@@ -120,6 +291,36 @@ async def _begin_for_aircraft(
 
     non_fuel_stations = [s for s in profile.stations if s.station_type != StationType.FUEL]
     fuel_stations = profile.fuel_stations
+    last = seed_values or await _last_advanced_input(
+        user.id, aircraft.id, flight_service
+    )
+    last_load_values = {}
+    last_load_arms = {}
+    for station in non_fuel_stations:
+        weight_text = (last or {}).get("loads", {}).get(station.station_id)
+        if weight_text is None:
+            continue
+        weight = Decimal(weight_text)
+        if station.maximum_weight_lb is not None and weight > station.maximum_weight_lb:
+            continue
+        if station.is_adjustable_arm:
+            arm_text = (last or {}).get("load_arms", {}).get(station.station_id)
+            if arm_text is None:
+                continue
+            arm = Decimal(arm_text)
+            if not station.minimum_arm_in <= arm <= station.maximum_arm_in:
+                continue
+            last_load_arms[station.station_id] = arm_text
+        last_load_values[station.station_id] = weight_text
+    last_fuel_starting = {
+        station.station_id: value
+        for station in fuel_stations
+        if (
+            (value := (last or {}).get("fuel_starting", {}).get(station.station_id))
+            is not None
+            and Decimal(value) <= station.maximum_volume_gal
+        )
+    }
 
     await state.update_data(
         aircraft_id=aircraft.id,
@@ -143,6 +344,9 @@ async def _begin_for_aircraft(
         fuel_station_capacities={
             s.station_id: str(s.maximum_volume_gal) for s in fuel_stations
         },
+        last_load_values=last_load_values,
+        last_load_arms=last_load_arms,
+        last_fuel_starting=last_fuel_starting,
         load_index=0,
         fuel_index=0,
         loads={},
@@ -179,8 +383,16 @@ async def _render_load_prompt(message: Message, state: FSMContext, user: User, i
         )
     else:
         prompt = t("ask_load_at_station", lang, station=name)
+    adjustable = data.get("non_fuel_station_adjustable", {}).get(station_id, False)
     await message.answer(
-        prompt, reply_markup=zero_cancel_keyboard(lang, show_back=show_back)
+        prompt,
+        reply_markup=_load_keyboard(
+            lang,
+            last_value=data.get("last_load_values", {}).get(station_id),
+            last_arm=data.get("last_load_arms", {}).get(station_id),
+            adjustable=adjustable,
+            show_back=show_back,
+        ),
     )
 
 
@@ -199,13 +411,20 @@ async def _render_fuel_prompt(message: Message, state: FSMContext, user: User, i
     fuel_ids = data["fuel_station_ids"]
     station_id = fuel_ids[index]
     name = data.get("fuel_station_names", {}).get(station_id, station_id)
-    keyboard = zero_cancel_keyboard(lang) if field == "starting" else skip_cancel_keyboard(lang)
     if field == "starting":
+        capacity = Decimal(data["fuel_station_capacities"][station_id])
+        keyboard = _fuel_start_keyboard(
+            lang,
+            capacity=capacity,
+            last_value=data.get("last_fuel_starting", {}).get(station_id),
+            show_back=bool(data.get("_nav_history")),
+        )
         kwargs = {
             "station": name,
-            "capacity": fmt(Decimal(data["fuel_station_capacities"][station_id]), " gal"),
+            "capacity": fmt(capacity, " gal"),
         }
     else:
+        keyboard = skip_cancel_keyboard(lang)
         starting = Decimal(data.get("fuel", {}).get(station_id, {}).get("starting_gal", "0"))
         kwargs = {"station": name, "available": fmt(starting, " gal")}
     await message.answer(t(text_key, lang, **kwargs), reply_markup=keyboard)
@@ -246,9 +465,23 @@ async def got_load_at_station(message: Message, state: FSMContext, user: User) -
     except InputParseError as exc:
         await message.answer(t("error_generic", lang, detail=str(exc)))
         return
+    await _store_load_and_advance(message, state, user, weight, arm)
+
+
+async def _store_load_and_advance(
+    message: Message,
+    state: FSMContext,
+    user: User,
+    weight: Decimal,
+    arm: Decimal | None,
+) -> None:
+    lang = _lang(user)
+    data = await state.get_data()
+    station_ids = data["non_fuel_station_ids"]
+    index = data["load_index"]
+    station_id = station_ids[index]
     loads = data["loads"]
     load_arms = data.get("load_arms", {})
-    loads[station_id] = str(weight)
     if arm is not None:
         minimum = Decimal(data["non_fuel_station_min_arms"][station_id])
         maximum = Decimal(data["non_fuel_station_max_arms"][station_id])
@@ -262,9 +495,35 @@ async def got_load_at_station(message: Message, state: FSMContext, user: User) -
             )
             return
         load_arms[station_id] = str(arm)
+    loads[station_id] = str(weight)
     await state.update_data(loads=loads, load_arms=load_arms)
     await push_checkpoint(state, ("load", index))
     await _ask_next_load_or_fuel(message, state, user, index + 1)
+
+
+@router.callback_query(
+    FlightWizard.load_at_station, F.data == "flight:use_last_load"
+)
+async def use_last_load(
+    callback: CallbackQuery, state: FSMContext, user: User
+) -> None:
+    data = await state.get_data()
+    station_id = data["non_fuel_station_ids"][data["load_index"]]
+    last_value = data.get("last_load_values", {}).get(station_id)
+    if last_value is None:
+        await callback.answer()
+        return
+    arm = None
+    if data.get("non_fuel_station_adjustable", {}).get(station_id, False):
+        last_arm = data.get("last_load_arms", {}).get(station_id)
+        if last_arm is None:
+            await callback.answer()
+            return
+        arm = Decimal(last_arm)
+    await callback.answer()
+    await _store_load_and_advance(
+        callback.message, state, user, Decimal(last_value), arm
+    )
 
 
 def _parse_load_entry(
@@ -335,6 +594,16 @@ async def got_fuel_starting(message: Message, state: FSMContext, user: User) -> 
     except InputParseError as exc:
         await message.answer(t("error_generic", lang, detail=str(exc)))
         return
+    await _store_starting_fuel_and_advance(message, state, user, gal)
+
+
+async def _store_starting_fuel_and_advance(
+    message: Message,
+    state: FSMContext,
+    user: User,
+    gal: Decimal,
+) -> None:
+    lang = _lang(user)
     data = await state.get_data()
     fuel_ids = data["fuel_station_ids"]
     index = data["fuel_index"]
@@ -342,7 +611,7 @@ async def got_fuel_starting(message: Message, state: FSMContext, user: User) -> 
     capacity = Decimal(data["fuel_station_capacities"][station_id])
     if gal > capacity:
         await message.answer(
-            t("fuel_capacity_exceeded", lang, capacity=fmt(capacity, " gal"))
+            t("fuel_tank_capacity_exceeded", lang, capacity=fmt(capacity, " gal"))
         )
         return
     fuel = data["fuel"]
@@ -353,6 +622,39 @@ async def got_fuel_starting(message: Message, state: FSMContext, user: User) -> 
     await state.update_data(fuel=fuel)
     await push_checkpoint(state, ("fuel", index, "starting"))
     await _render_fuel_prompt(message, state, user, index, "enroute")
+
+
+@router.callback_query(
+    FlightWizard.fuel_starting, F.data == "flight:full_fuel"
+)
+async def use_full_fuel(
+    callback: CallbackQuery, state: FSMContext, user: User
+) -> None:
+    data = await state.get_data()
+    station_id = data["fuel_station_ids"][data["fuel_index"]]
+    capacity = Decimal(data["fuel_station_capacities"][station_id])
+    await callback.answer()
+    await _store_starting_fuel_and_advance(
+        callback.message, state, user, capacity
+    )
+
+
+@router.callback_query(
+    FlightWizard.fuel_starting, F.data == "flight:use_last_fuel"
+)
+async def use_last_fuel(
+    callback: CallbackQuery, state: FSMContext, user: User
+) -> None:
+    data = await state.get_data()
+    station_id = data["fuel_station_ids"][data["fuel_index"]]
+    last_value = data.get("last_fuel_starting", {}).get(station_id)
+    if last_value is None:
+        await callback.answer()
+        return
+    await callback.answer()
+    await _store_starting_fuel_and_advance(
+        callback.message, state, user, Decimal(last_value)
+    )
 
 
 @router.callback_query(FlightWizard.fuel_starting, F.data == "wizard:skip")
@@ -455,49 +757,127 @@ async def _show_flight_review(message: Message, state: FSMContext, user: User) -
 
 
 def _phase_text(phase: PhaseResult, lang: str) -> str:
-    lines = [phase.phase]
-    lines.append(f"Weight: {fmt(phase.total_weight_lb, ' lb')}")
+    phase_name = t(f"phase_{phase.phase.lower()}", lang)
+    phase_status_key = {
+        LimitStatus.WITHIN: "phase_status_within",
+        LimitStatus.ON_LIMIT: "phase_status_on_limit",
+        LimitStatus.OUT_OF_LIMITS: "phase_status_out_of_limits",
+    }[phase.overall_status]
+    lines = [f"{phase_name} — {t(phase_status_key, lang)}"]
+    lines.append(t("result_weight", lang, value=fmt(phase.total_weight_lb, " lb")))
     if phase.weight_limit_lb is not None:
-        lines.append(f"Limit: {fmt(phase.weight_limit_lb, ' lb')}")
+        limit_key = {
+            "RAMP": "result_max_ramp_weight",
+            "TAKEOFF": "result_max_takeoff_weight",
+            "LANDING": "result_max_landing_weight",
+        }[phase.phase]
+        lines.append(t(limit_key, lang, value=fmt(phase.weight_limit_lb, " lb")))
         margin = phase.weight_margin_lb
-        lines.append(f"Weight margin: {fmt(margin, ' lb')}")
-    lines.append(f"CG: {fmt(phase.cg_in, ' in')}")
+        if margin > 0:
+            lines.append(t("result_weight_below", lang, value=fmt(margin, " lb")))
+        elif margin < 0:
+            lines.append(t("result_weight_over", lang, value=fmt(abs(margin), " lb")))
+        else:
+            lines.append(t("result_weight_on_limit", lang))
+    else:
+        lines.append(t("result_weight_limit_not_saved", lang, phase=phase_name))
+    lines.append("")
+    lines.append(t("result_cg", lang, value=fmt(phase.cg_in, " in")))
     cg = phase.cg_check
     if cg is not None and not cg.weight_within_envelope:
-        lines.append("CG envelope: NOT DEFINED AT THIS AIRCRAFT WEIGHT")
+        lines.append(t("result_cg_envelope_not_defined", lang))
     elif cg is not None:
-        lines.append(f"Allowed: {fmt(cg.forward_limit_in, ' in')}-{fmt(cg.aft_limit_in, ' in')}")
-        lines.append(f"Forward margin: {fmt(cg.forward_margin_in, ' in')}")
-        lines.append(f"Aft margin: {fmt(cg.aft_margin_in, ' in')}")
+        lines.append(
+            t(
+                "result_allowed_cg",
+                lang,
+                forward=fmt(cg.forward_limit_in, " in"),
+                aft=fmt(cg.aft_limit_in, " in"),
+            )
+        )
+        if cg.forward_margin_in < 0:
+            lines.append(
+                t(
+                    "result_cg_forward_exceeded",
+                    lang,
+                    value=fmt(abs(cg.forward_margin_in), " in"),
+                )
+            )
+        elif cg.aft_margin_in < 0:
+            lines.append(
+                t(
+                    "result_cg_aft_exceeded",
+                    lang,
+                    value=fmt(abs(cg.aft_margin_in), " in"),
+                )
+            )
+        elif cg.status == LimitStatus.ON_LIMIT:
+            lines.append(t("result_cg_on_limit", lang))
+        else:
+            lines.append(t("result_cg_within", lang))
     else:
-        lines.append("CG limits: NOT EVALUATED -- no CG envelope entered for this aircraft")
+        lines.append(t("result_cg_not_evaluated", lang))
     for s in phase.station_results:
         if s.over_station_limit:
-            lines.append(f"⚠️ {s.name} exceeds its station weight limit")
+            lines.append(t("result_station_limit_exceeded", lang, station=s.name))
         if s.over_capacity:
-            lines.append(f"⚠️ {s.name} exceeds fuel tank capacity")
+            lines.append(t("result_tank_capacity_exceeded", lang, station=s.name))
     return "\n".join(lines)
 
 
-def _phase_violation_detail(phase: PhaseResult) -> list[str]:
-    """Short, specific reasons a phase isn't WITHIN -- so the header can say exactly what's
-    wrong (e.g. "TAKEOFF (forward CG)") instead of a single unqualified overall status."""
-    details = []
-    if phase.weight_status == LimitStatus.OUT_OF_LIMITS:
-        details.append("overweight")
-    elif phase.weight_status == LimitStatus.ON_LIMIT:
-        details.append("at max weight")
-    if any(result.over_station_limit for result in phase.station_results):
-        details.append("station load limit")
-    if any(result.over_capacity for result in phase.station_results):
-        details.append("fuel capacity")
+def _phase_failure_reasons(phase: PhaseResult, lang: str) -> list[str]:
+    phase_name = t(f"phase_{phase.phase.lower()}", lang)
+    reasons = []
+    if phase.weight_status == LimitStatus.OUT_OF_LIMITS and phase.weight_margin_lb is not None:
+        reasons.append(
+            t(
+                "overall_reason_weight",
+                lang,
+                phase=phase_name,
+                value=fmt(abs(phase.weight_margin_lb), " lb"),
+            )
+        )
     cg = phase.cg_check
     if cg is not None and not cg.weight_within_envelope:
-        details.append("weight outside CG envelope range")
-    elif cg is not None and cg.status != LimitStatus.WITHIN:
-        direction = "forward CG" if cg.forward_margin_in < 0 else "aft CG" if cg.aft_margin_in < 0 else "CG on limit"
-        details.append(direction)
-    return details
+        reasons.append(t("overall_reason_cg_weight", lang, phase=phase_name))
+    elif cg is not None and cg.forward_margin_in < 0:
+        reasons.append(
+            t(
+                "overall_reason_forward_cg",
+                lang,
+                phase=phase_name,
+                value=fmt(abs(cg.forward_margin_in), " in"),
+            )
+        )
+    elif cg is not None and cg.aft_margin_in < 0:
+        reasons.append(
+            t(
+                "overall_reason_aft_cg",
+                lang,
+                phase=phase_name,
+                value=fmt(abs(cg.aft_margin_in), " in"),
+            )
+        )
+    for station in phase.station_results:
+        if station.over_station_limit:
+            reasons.append(
+                t(
+                    "overall_reason_station",
+                    lang,
+                    phase=phase_name,
+                    station=station.name,
+                )
+            )
+        if station.over_capacity:
+            reasons.append(
+                t(
+                    "overall_reason_tank",
+                    lang,
+                    phase=phase_name,
+                    station=station.name,
+                )
+            )
+    return reasons
 
 
 def _status_header(
@@ -510,21 +890,41 @@ def _status_header(
         if result.overall_status == LimitStatus.ON_LIMIT:
             return "⚠️ CG LIMITS NOT EVALUATED — ENTERED WEIGHT LIMIT ON BOUNDARY"
         header += " — CG LIMITS NOT EVALUATED"
-    if result.overall_status == LimitStatus.WITHIN:
-        return header
-    phases = [("TAKEOFF", result.takeoff)]
-    if result.ramp.total_weight_lb != result.takeoff.total_weight_lb:
-        phases.insert(0, ("RAMP", result.ramp))
-    if result.landing is not None:
-        phases.append(("LANDING", result.landing))
-    problems = [f"{name} ({', '.join(_phase_violation_detail(phase))})" for name, phase in phases if _phase_violation_detail(phase)]
-    if problems:
-        header += " -- " + "; ".join(problems)
-    if result.zero_fuel_status == LimitStatus.OUT_OF_LIMITS:
-        header += " -- ZERO-FUEL WEIGHT EXCEEDED"
-    elif result.zero_fuel_status == LimitStatus.ON_LIMIT:
-        header += " -- ZERO-FUEL WEIGHT ON LIMIT"
     return header
+
+
+def _overall_result_text(result: CalculationResult, lang: str) -> str:
+    lines = [t("overall_result", lang)]
+    if result.overall_status == LimitStatus.WITHIN:
+        lines.append(t("overall_within", lang))
+        return "\n".join(lines)
+    if result.overall_status == LimitStatus.ON_LIMIT:
+        lines.append(t("overall_on_limit", lang))
+        return "\n".join(lines)
+
+    reasons = []
+    phases = [result.takeoff]
+    if result.ramp.total_weight_lb != result.takeoff.total_weight_lb:
+        phases.insert(0, result.ramp)
+    if result.landing is not None:
+        phases.append(result.landing)
+    for phase in phases:
+        reasons.extend(_phase_failure_reasons(phase, lang))
+    if result.zero_fuel_status == LimitStatus.OUT_OF_LIMITS:
+        reasons.append(
+            t(
+                "overall_reason_zfw",
+                lang,
+                value=fmt(result.zero_fuel_weight_lb - result.zero_fuel_limit_lb, " lb"),
+            )
+        )
+    # The same station or zero-fuel violation can be present in multiple phases. Keep the
+    # pilot summary compact while preserving the first, phase-specific occurrence.
+    reasons = list(dict.fromkeys(reasons))
+    lines.append(t("overall_out_of_limits", lang))
+    lines.extend(f"• {reason}" for reason in reasons)
+    lines.append(t("overall_adjust_and_recalculate", lang))
+    return "\n".join(lines)
 
 
 _STATUS_KEY = {
@@ -643,6 +1043,8 @@ async def flight_review_confirm(
     elif not result.landing_evaluated:
         lines.append(t("landing_not_evaluated", lang))
         lines.append("")
+    lines.append(_overall_result_text(result, lang))
+    lines.append("")
     lines.append(t("result_footer", lang))
 
     await state.clear()
@@ -720,11 +1122,32 @@ async def calculation_history(
 
 @router.callback_query(FlightWizard.review, F.data == "wizard:edit")
 async def flight_review_edit(
-    callback: CallbackQuery, state: FSMContext, user: User, aircraft_service: AircraftService
+    callback: CallbackQuery,
+    state: FSMContext,
+    user: User,
+    aircraft_service: AircraftService,
+    flight_service: FlightService,
 ) -> None:
     data = await state.get_data()
+    seed_values = {
+        "loads": dict(data.get("loads", {})),
+        "load_arms": dict(data.get("load_arms", {})),
+        "fuel_starting": {
+            station_id: values["starting_gal"]
+            for station_id, values in data.get("fuel", {}).items()
+            if "starting_gal" in values
+        },
+    }
     await callback.answer()
-    await _begin_for_aircraft(callback.message, state, user, aircraft_service, data["aircraft_id"])
+    await _begin_for_aircraft(
+        callback.message,
+        state,
+        user,
+        aircraft_service,
+        flight_service,
+        data["aircraft_id"],
+        seed_values=seed_values,
+    )
 
 
 @router.message(StateFilter(FlightWizard))

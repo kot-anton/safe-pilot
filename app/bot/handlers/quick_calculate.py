@@ -68,19 +68,33 @@ async def _last_quick_input(
 ) -> dict | None:
     history = await flight_service.list_history(user_id, aircraft_id, limit=5)
     for calculation in history:
-        if not calculation.calculation_engine_version.endswith("-quick"):
+        if not str(
+            getattr(calculation, "calculation_engine_version", "")
+        ).endswith("-quick"):
             continue
         try:
-            return json.loads(calculation.input_snapshot_json)
+            snapshot = json.loads(calculation.input_snapshot_json)
         except (ValueError, TypeError):
             continue
+        if not isinstance(snapshot, dict):
+            continue
+        values = {}
+        for key in ("front_lb", "rear_lb", "baggage_lb", "total_fuel_gal"):
+            try:
+                value = Decimal(str(snapshot.get(key)))
+            except (ArithmeticError, TypeError, ValueError):
+                continue
+            if value.is_finite() and value >= 0:
+                values[key] = str(value)
+        if values:
+            return values
     return None
 
 
 def _step_keyboard(
     lang: str, *, last_value: str | None, unit: str
 ) -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(text="0", callback_data="quick:zero")]]
+    rows = []
     if last_value is not None:
         rows.append(
             [
@@ -106,9 +120,8 @@ def _fuel_keyboard(
                 callback_data="quick:full",
             )
         ],
-        [InlineKeyboardButton(text="0", callback_data="quick:zero")],
     ]
-    if last_value is not None:
+    if last_value is not None and Decimal(last_value) <= full_gal:
         rows.append(
             [
                 InlineKeyboardButton(
@@ -232,11 +245,14 @@ async def calculation_mode_advanced(
     state: FSMContext,
     user: User,
     aircraft_service: AircraftService,
+    flight_service: FlightService,
 ) -> None:
     from app.bot.handlers.flight_calculation import start_calculation
 
     await callback.answer()
-    await start_calculation(callback.message, state, user, aircraft_service)
+    await start_calculation(
+        callback.message, state, user, aircraft_service, flight_service
+    )
 
 
 async def start_quick_calculation(

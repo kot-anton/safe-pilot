@@ -1,12 +1,20 @@
 import ast
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
 from aiogram.types import BotCommandScopeAllPrivateChats, MenuButtonCommands
 
 from app.bot.commands import COMMAND_TEXT_KEYS, bot_commands, configure_bot_ui
+from app.bot.handlers.aircraft_wizard import render_summary
 from app.bot.handlers.menu import _aircraft_banner, cmd_start
-from app.bot.handlers.quick_calculate import calculation_mode_keyboard, show_calculation_options
+from app.bot.handlers.flight_calculation import _fuel_start_keyboard, _load_keyboard
+from app.bot.handlers.quick_calculate import (
+    _fuel_keyboard,
+    _step_keyboard,
+    calculation_mode_keyboard,
+    show_calculation_options,
+)
 from app.bot.keyboards.common import main_menu_keyboard
 from app.bot.middlewares.db_session import preferred_language
 from app.bot.texts.i18n import STRINGS
@@ -74,6 +82,104 @@ def test_main_menu_reply_keyboard_is_persistent_and_localized():
     assert english.input_field_placeholder == STRINGS["menu_placeholder"]["en"]
     assert russian.input_field_placeholder == STRINGS["menu_placeholder"]["ru"]
     assert english.keyboard[0][0].text != russian.keyboard[0][0].text
+
+
+def test_aircraft_review_is_compact_and_hides_internal_station_enums():
+    data = {
+        "tail_number": "N4508D",
+        "model": "Bonanza",
+        "nickname": None,
+        "manufacturer": None,
+        "basic_empty_weight_lb": "1960.8",
+        "basic_empty_cg_in": "79.1",
+        "basic_empty_moment_lb_in": "155158.1",
+        "max_ramp_weight_lb": "2785",
+        "max_takeoff_weight_lb": "2775",
+        "max_landing_weight_lb": "2775",
+        "max_zero_fuel_weight_lb": None,
+        "stations": [
+            {
+                "name": "Rear Seats",
+                "station_type": "REAR_SEATS",
+                "default_arm_in": "118",
+                "is_adjustable_arm": False,
+                "maximum_weight_lb": None,
+                "maximum_volume_gal": None,
+                "fuel_density_lb_per_gal": None,
+            },
+            {
+                "name": "Main Fuel Tanks",
+                "station_type": "FUEL",
+                "default_arm_in": "75",
+                "is_adjustable_arm": False,
+                "maximum_weight_lb": None,
+                "maximum_volume_gal": "40",
+                "fuel_density_lb_per_gal": "6",
+            },
+            {
+                "name": "Front Seats",
+                "station_type": "FRONT_SEATS",
+                "default_arm_in": "89",
+                "is_adjustable_arm": False,
+                "maximum_weight_lb": None,
+                "maximum_volume_gal": None,
+                "fuel_density_lb_per_gal": None,
+            },
+        ],
+        "envelope_rows": [
+            {
+                "weight_lb": "2265",
+                "forward_cg_limit_in": "76.5",
+                "aft_cg_limit_in": "85.7",
+            }
+        ],
+    }
+
+    summary = render_summary(data, "en")
+
+    assert "REAR_SEATS" not in summary
+    assert "FRONT_SEATS" not in summary
+    assert "(FUEL)" not in summary
+    assert "N4508D — Bonanza" in summary
+    assert "Moment: 155,158.1 lb-in" in summary
+    assert "LOAD STATIONS (2)" in summary
+    assert "FUEL TANKS (1)" in summary
+    assert "• Main Fuel Tanks — ARM 75 in" in summary
+    assert "Usable: 40 gal • Density: 6 lb/gal" in summary
+    assert "Max Zero Fuel Weight" not in summary
+    assert summary.index("Front Seats") < summary.index("Rear Seats")
+
+
+def _inline_callbacks(keyboard):
+    return [button.callback_data for row in keyboard.inline_keyboard for button in row]
+
+
+def test_calculation_shortcuts_do_not_offer_literal_zero_buttons():
+    quick_load = _step_keyboard("en", last_value="180", unit="lb")
+    quick_fuel = _fuel_keyboard("en", full_gal=Decimal("40"), last_value="25")
+    advanced_load = _load_keyboard(
+        "en",
+        last_value="180",
+        last_arm=None,
+        adjustable=False,
+        show_back=False,
+    )
+    advanced_fuel = _fuel_start_keyboard(
+        "en", capacity=Decimal("20"), last_value="12"
+    )
+
+    for keyboard in (quick_load, quick_fuel, advanced_load, advanced_fuel):
+        assert all(
+            button.text != "0"
+            for row in keyboard.inline_keyboard
+            for button in row
+        )
+
+    assert "quick:use_last" in _inline_callbacks(quick_load)
+    assert "quick:full" in _inline_callbacks(quick_fuel)
+    assert "flight:use_last_load" in _inline_callbacks(advanced_load)
+    assert "flight:full_fuel" in _inline_callbacks(advanced_fuel)
+    assert "flight:use_last_fuel" in _inline_callbacks(advanced_fuel)
 
 
 def test_new_user_language_follows_supported_telegram_locale():
