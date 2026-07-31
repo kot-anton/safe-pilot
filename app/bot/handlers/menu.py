@@ -45,14 +45,14 @@ async def cmd_start(
 
 
 @router.message(Command("aircraft"))
-@router.message(F.text.in_({t("menu_aircraft_submenu", "en"), t("menu_aircraft_submenu", "ru")}))
+@router.message(F.text == t("menu_aircraft_submenu"))
 async def aircraft_submenu(message: Message, state: FSMContext, user: User) -> None:
     await state.clear()
     lang = _lang(user)
     await message.answer(t("aircraft_menu", lang), reply_markup=aircraft_submenu_keyboard(lang))
 
 
-@router.message(F.text.in_({t("menu_more_submenu", "en"), t("menu_more_submenu", "ru")}))
+@router.message(F.text == t("menu_more_submenu"))
 async def more_submenu(message: Message, state: FSMContext, user: User) -> None:
     await state.clear()
     lang = _lang(user)
@@ -60,7 +60,7 @@ async def more_submenu(message: Message, state: FSMContext, user: User) -> None:
 
 
 @router.message(Command("menu"))
-@router.message(F.text.in_({t("menu_back", "en"), t("menu_back", "ru")}))
+@router.message(F.text == t("menu_back"))
 async def back_to_main_menu(message: Message, state: FSMContext, user: User) -> None:
     await state.clear()
     lang = _lang(user)
@@ -97,7 +97,7 @@ async def card_change_aircraft(
 
 
 @router.message(Command("help"))
-@router.message(F.text.in_({t("menu_help", "en"), t("menu_help", "ru")}))
+@router.message(F.text == t("menu_help"))
 async def cmd_help(message: Message, user: User) -> None:
     await message.answer(t("help_text", _lang(user)))
 
@@ -117,7 +117,7 @@ async def cmd_history(
 
 
 @router.message(Command("cancel"))
-@router.message(F.text.in_({t("menu_cancel", "en"), t("menu_cancel", "ru")}))
+@router.message(F.text == t("menu_cancel"))
 async def cmd_cancel(message: Message, state: FSMContext, user: User) -> None:
     await state.clear()
     lang = _lang(user)
@@ -129,7 +129,7 @@ def _aircraft_banner(aircraft: Aircraft) -> str:
     return f"{aircraft.tail_number}{nickname} -- {aircraft.model}"
 
 
-@router.message(F.text.in_({t("menu_my_aircraft", "en"), t("menu_my_aircraft", "ru")}))
+@router.message(F.text == t("menu_my_aircraft"))
 async def my_aircraft(
     message: Message,
     state: FSMContext,
@@ -149,7 +149,7 @@ async def my_aircraft(
     await message.answer("\n".join(lines))
 
 
-@router.message(F.text.in_({t("menu_select_aircraft", "en"), t("menu_select_aircraft", "ru")}))
+@router.message(F.text == t("menu_select_aircraft"))
 async def select_aircraft_prompt(
     message: Message,
     state: FSMContext,
@@ -193,7 +193,7 @@ async def select_aircraft_chosen(
     await callback.message.answer(t("main_menu", lang), reply_markup=main_menu_keyboard(lang))
 
 
-@router.message(F.text.in_({t("menu_archive_aircraft", "en"), t("menu_archive_aircraft", "ru")}))
+@router.message(F.text == t("menu_archive_aircraft"))
 async def archive_aircraft_prompt(
     message: Message,
     state: FSMContext,

@@ -596,7 +596,7 @@ def _setup_mode_keyboard(lang: str) -> InlineKeyboardMarkup:
     )
 
 
-@router.message(F.text.in_({t("menu_add_aircraft", "en"), t("menu_add_aircraft", "ru")}))
+@router.message(F.text == t("menu_add_aircraft"))
 async def start_wizard(message: Message, state: FSMContext, user: User) -> None:
     lang = _lang(user)
     await state.clear()
@@ -616,7 +616,7 @@ async def choose_setup_mode(callback: CallbackQuery, state: FSMContext, user: Us
     await goto(callback.message, state, user, AircraftWizard.tail_number, render_tail_number, record_history=False)
 
 
-@router.message(F.text.in_({t("menu_rental_aircraft", "en"), t("menu_rental_aircraft", "ru")}))
+@router.message(F.text == t("menu_rental_aircraft"))
 async def start_rental_wizard(message: Message, state: FSMContext, user: User) -> None:
     """Rental aircraft always use Quick Setup -- just flagged as temporary so it can be told
     apart later (e.g. for a future auto-archive pass) without a separate flow to maintain."""

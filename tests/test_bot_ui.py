@@ -48,25 +48,22 @@ class _FakeMessage:
         self.answers.append((text, kwargs))
 
 
-async def test_telegram_command_menu_is_registered_in_english_and_russian():
+async def test_telegram_command_menu_is_registered():
     bot = _FakeBot()
 
     await configure_bot_ui(bot)
 
-    assert len(bot.command_calls) == 2
+    assert len(bot.command_calls) == 1
     english, english_kwargs = bot.command_calls[0]
-    russian, russian_kwargs = bot.command_calls[1]
     assert [command.command for command in english] == [item[0] for item in COMMAND_TEXT_KEYS]
-    assert [command.command for command in russian] == [item[0] for item in COMMAND_TEXT_KEYS]
     assert isinstance(english_kwargs["scope"], BotCommandScopeAllPrivateChats)
     assert "language_code" not in english_kwargs
-    assert russian_kwargs["language_code"] == "ru"
     assert len(bot.menu_calls) == 1
     assert isinstance(bot.menu_calls[0]["menu_button"], MenuButtonCommands)
 
 
 def test_bot_commands_satisfy_telegram_length_rules():
-    for lang in ("en", "ru"):
+    for lang in ("en",):
         commands = bot_commands(lang)
         assert commands
         assert all(1 <= len(command.command) <= 32 for command in commands)
@@ -75,13 +72,9 @@ def test_bot_commands_satisfy_telegram_length_rules():
 
 def test_main_menu_reply_keyboard_is_persistent_and_localized():
     english = main_menu_keyboard("en")
-    russian = main_menu_keyboard("ru")
 
     assert english.is_persistent is True
-    assert russian.is_persistent is True
-    assert english.input_field_placeholder == STRINGS["menu_placeholder"]["en"]
-    assert russian.input_field_placeholder == STRINGS["menu_placeholder"]["ru"]
-    assert english.keyboard[0][0].text != russian.keyboard[0][0].text
+    assert english.input_field_placeholder == STRINGS["menu_placeholder"]
 
 
 def test_aircraft_review_is_compact_and_hides_internal_station_enums():
@@ -194,7 +187,7 @@ def test_calculation_shortcuts_do_not_offer_literal_zero_buttons():
     assert "quick:use_last" not in _inline_callbacks(quick_fuel)
     assert "flight:use_last_fuel" not in _inline_callbacks(advanced_fuel)
     assert quick_load.inline_keyboard[0][0].text == "Use last: 180 lb"
-    assert "Full tanks — 53 gal (saved capacity)" == quick_fuel.inline_keyboard[0][0].text
+    assert "Full tanks — 53 gal usable" == quick_fuel.inline_keyboard[0][0].text
     assert all(
         "Use last" not in button.text
         for keyboard in (quick_fuel, advanced_fuel)
@@ -203,10 +196,10 @@ def test_calculation_shortcuts_do_not_offer_literal_zero_buttons():
     )
 
 
-def test_new_user_language_follows_supported_telegram_locale():
-    assert preferred_language("ru-RU", "en") == "ru"
+def test_new_user_language_is_always_english():
+    assert preferred_language("ru-RU", "en") == "en"
     assert preferred_language("en-US", "ru") == "en"
-    assert preferred_language("de-DE", "ru") == "ru"
+    assert preferred_language("de-DE", "ru") == "en"
     assert preferred_language(None, "unsupported") == "en"
 
 
@@ -221,7 +214,7 @@ async def test_start_clears_stale_state_and_always_sends_main_menu():
     assert len(message.answers) == 2
     menu_markup = message.answers[-1][1]["reply_markup"]
     assert menu_markup.is_persistent is True
-    assert menu_markup.keyboard[0][0].text == STRINGS["menu_new_calc"]["en"]
+    assert menu_markup.keyboard[0][0].text == STRINGS["menu_new_calc"]
 
 
 def test_aircraft_revision_is_not_exposed_in_user_facing_banner():
@@ -251,11 +244,11 @@ async def test_calculation_offers_quick_and_advanced_modes_before_collecting_inp
     callbacks = [row[0].callback_data for row in keyboard.inline_keyboard]
     assert callbacks == ["calc:quick", "calc:advanced", "quick:cancel"]
 
-    russian = calculation_mode_keyboard("ru")
-    assert russian.inline_keyboard[1][0].text == STRINGS["btn_takeoff_landing"]["ru"]
+    keyboard = calculation_mode_keyboard("en")
+    assert keyboard.inline_keyboard[1][0].text == STRINGS["btn_takeoff_landing"]
 
 
-def test_every_literal_translation_key_exists_and_has_both_languages():
+def test_every_literal_translation_key_exists():
     missing_keys = []
     for path in Path("app").rglob("*.py"):
         tree = ast.parse(path.read_text(), filename=str(path))
@@ -274,4 +267,3 @@ def test_every_literal_translation_key_exists_and_has_both_languages():
                 missing_keys.append((path, node.lineno, key))
 
     assert missing_keys == []
-    assert all("en" in translations and "ru" in translations for translations in STRINGS.values())

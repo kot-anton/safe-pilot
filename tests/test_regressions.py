@@ -70,7 +70,7 @@ async def test_quick_fuel_prompt_identifies_configured_tanks_and_saved_total():
     prompt, kwargs = message.answers[-1]
     assert prompt == "Total usable fuel on board at takeoff (Main, Aux), in US gal:"
     assert kwargs["reply_markup"].inline_keyboard[0][0].text == (
-        "Full tanks — 53 gal (saved capacity)"
+        "Full tanks — 53 gal usable"
     )
     assert all(
         "Use last" not in button.text
@@ -451,13 +451,13 @@ async def test_advanced_flow_uses_canonical_station_order(monkeypatch):
     assert state.data["non_fuel_station_ids"] == ["front", "rear", "bag"]
     assert state.data["fuel_station_ids"] == ["main", "aux"]
     assert state.current_state == FlightWizard.load_at_station
-    assert message.answers[-1][0] == "Combined weight on the front seats, in lb:"
+    assert message.answers[-1][0] == "Front seats combined weight in lb:"
 
     await flight_calculation._render_load_prompt(message, state, user, 1)
-    assert message.answers[-1][0] == "Combined weight on the rear seats, in lb:"
-
+    assert message.answers[-1][0] == "Rear seats combined weight in lb:"
+    
     await flight_calculation._render_load_prompt(message, state, user, 2)
-    assert message.answers[-1][0] == "Total baggage weight, in lb:"
+    assert message.answers[-1][0] == "Baggage weight in lb:"
 
 
 async def test_advanced_flow_rejects_fuel_above_tank_capacity_immediately():

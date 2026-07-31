@@ -38,5 +38,4 @@ async def configure_bot_ui(bot: Bot) -> None:
     """Register default/translated commands and force Telegram's command menu button on."""
     scope = BotCommandScopeAllPrivateChats()
     await bot.set_my_commands(bot_commands("en"), scope=scope)
-    await bot.set_my_commands(bot_commands("ru"), scope=scope, language_code="ru")
     await bot.set_chat_menu_button(menu_button=MenuButtonCommands())

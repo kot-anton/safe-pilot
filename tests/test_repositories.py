@@ -60,13 +60,13 @@ async def test_default_language_is_honored_for_new_users(session_factory):
     async with factory() as session:
         service = AircraftService(AircraftRepository(session))
 
-        ru_user = await service.get_or_create_user(telegram_user_id=999, language="ru")
+        custom_user = await service.get_or_create_user(telegram_user_id=999, language="xx")
         await session.commit()
-        assert ru_user.language == "ru"
+        assert custom_user.language == "xx"
 
         # a returning user's language must not be reset by a later call with a different default
         same_user_again = await service.get_or_create_user(telegram_user_id=999, language="en")
-        assert same_user_again.language == "ru"
+        assert same_user_again.language == "xx"
 
 
 async def test_new_aircraft_becomes_active_automatically(session_factory):

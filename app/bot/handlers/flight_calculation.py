@@ -1080,7 +1080,7 @@ def _history_summary(calc) -> str:
     return f"{weight_text} -- {status_text}"
 
 
-@router.message(F.text.in_({t("menu_history", "en"), t("menu_history", "ru")}))
+@router.message(F.text == t("menu_history"))
 async def calculation_history(
     message: Message,
     state: FSMContext,
