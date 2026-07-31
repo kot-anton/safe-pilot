@@ -11,16 +11,9 @@ from app.repositories.flight_repository import FlightRepository
 from app.services.aircraft_service import AircraftService
 from app.services.flight_service import FlightService
 
-SUPPORTED_LANGUAGES = {"en", "ru"}
-
-
 def preferred_language(telegram_language_code: str | None, fallback: str) -> str:
-    """Choose a supported UI language for a new user without changing returning users."""
-    telegram_language = (telegram_language_code or "").split("-", 1)[0].lower()
-    if telegram_language in SUPPORTED_LANGUAGES:
-        return telegram_language
-    normalized_fallback = fallback.lower()
-    return normalized_fallback if normalized_fallback in SUPPORTED_LANGUAGES else "en"
+    """The bot is English-only; every user gets "en" regardless of Telegram locale."""
+    return "en"
 
 
 class DbSessionMiddleware(BaseMiddleware):

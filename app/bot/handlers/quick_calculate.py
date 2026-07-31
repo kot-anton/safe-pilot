@@ -211,7 +211,7 @@ def _result_keyboard(lang: str) -> InlineKeyboardMarkup:
 
 
 @router.message(Command("calculate"))
-@router.message(F.text.in_({t("menu_new_calc", "en"), t("menu_new_calc", "ru")}))
+@router.message(F.text == t("menu_new_calc"))
 async def show_calculation_options(
     message: Message,
     state: FSMContext,

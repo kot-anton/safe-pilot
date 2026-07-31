@@ -30,7 +30,7 @@ def _lang(user: User) -> str:
     return user.language or "en"
 
 
-@router.message(F.text.in_({t("menu_update_aircraft", "en"), t("menu_update_aircraft", "ru")}))
+@router.message(F.text == t("menu_update_aircraft"))
 async def update_aircraft_prompt(
     message: Message,
     state: FSMContext,
