@@ -24,7 +24,7 @@ suggest a previous flight's fuel quantity. Occupant/load fields may still offer 
 The result shows:
 
 - takeoff weight and margin;
-- zero-fuel and station limits, when configured;
+- station limits, when configured;
 - exact CG or a mathematically possible CG range;
 - the interpolated allowable CG range at that weight;
 - `WITHIN LIMITS`, `ON LIMIT`, or a specific out-of-limits reason;
@@ -85,7 +85,7 @@ records publish moment instead, the bot stores that entered moment and derives C
 
 ### Advanced Setup
 
-Advanced Setup additionally collects optional ramp, landing, and zero-fuel weight limits, known useful load for a consistency check, nickname, and manufacturer.
+Advanced Setup additionally collects optional ramp and landing weight limits, known useful load for a consistency check, nickname, and manufacturer.
 
 ### Updating stations
 

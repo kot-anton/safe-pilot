@@ -5,7 +5,10 @@ import datetime
 import re
 from decimal import Decimal, InvalidOperation
 
+from app.bot.texts.i18n import t
+from app.database.models import User
 from app.domain.units import compact_decimal, to_decimal
+from app.services.aircraft_service import AircraftService, build_domain_profile
 
 
 class InputParseError(Exception):
@@ -59,6 +62,39 @@ def fmt(value: Decimal | None, unit: str = "") -> str:
     if text.endswith(".0"):
         text = text[:-2]
     return f"{text}{unit}"
+
+
+def lang(user: User) -> str:
+    return user.language or "en"
+
+
+async def load_profile_and_aircraft(
+    user_id: int, aircraft_id: int, aircraft_service: AircraftService
+):
+    """Shared by every calculation flow: resolve an aircraft's active revision into the
+    domain profile the calculator needs, or (None, None) if it isn't set up yet."""
+    aircraft = await aircraft_service.get_aircraft(user_id, aircraft_id)
+    if aircraft is None or aircraft.active_revision_id is None:
+        return None, None
+    revision = await aircraft_service.get_revision_for_user(
+        user_id, aircraft.active_revision_id
+    )
+    if revision is None:
+        return None, None
+    return aircraft, build_domain_profile(revision, aircraft)
+
+
+def recommendation_text(recommendations, lang_code: str) -> str:
+    """Render a load/fuel adjustment recommendation list the same way in every calculation
+    flow -- Quick and Advanced both hit this once their result comes back OUT_OF_LIMITS."""
+    if not recommendations:
+        return t("no_recommendations", lang_code)
+    lines = [t("recommendations_header", lang_code)]
+    for index, recommendation in enumerate(recommendations, start=1):
+        lines.append(f"{index}. {recommendation.describe()}")
+        if recommendation.note:
+            lines.append(f"   {recommendation.note}")
+    return "\n".join(lines)
 
 
 def short_tank_label(name: str) -> str:

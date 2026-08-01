@@ -42,25 +42,9 @@ def _worse(a: LimitStatus, b: LimitStatus) -> LimitStatus:
 
 
 @dataclass(frozen=True)
-class QuickStationLimitViolation:
-    station_id: str
-    station_name: str
-    actual_weight_lb: Decimal
-    maximum_weight_lb: Decimal
-
-
-@dataclass(frozen=True)
 class QuickCalculationResult:
     total_weight_lb: Decimal
     weight_limit_lb: Decimal | None
-    takeoff_weight_status: LimitStatus
-    zero_fuel_weight_lb: Decimal
-    zero_fuel_limit_lb: Decimal | None
-    zero_fuel_status: LimitStatus
-    station_status: LimitStatus
-    station_violations: tuple[QuickStationLimitViolation, ...]
-    # Aggregate of takeoff weight, zero-fuel weight, and individual station weight limits.
-    # Kept for compatibility with existing callers that need one load-related status.
     weight_status: LimitStatus
     fuel_allocation: FuelAllocationResult
     cg_forward: Decimal
@@ -76,12 +60,6 @@ class QuickCalculationResult:
         if self.weight_limit_lb is None:
             return None
         return self.weight_limit_lb - self.total_weight_lb
-
-    @property
-    def zero_fuel_margin_lb(self) -> Decimal | None:
-        if self.zero_fuel_limit_lb is None:
-            return None
-        return self.zero_fuel_limit_lb - self.zero_fuel_weight_lb
 
 
 def quick_station_for_type(
@@ -99,12 +77,7 @@ def quick_station_for_type(
             f"Standard calculation cannot combine multiple {label.lower()} stations. "
             "Use Advanced / Landing and enter each station separately."
         )
-    station = matches[0] if matches else None
-    if station is not None and station.is_adjustable_arm:
-        raise InvalidInputError(
-            f"{station.name} has an adjustable ARM. Use Advanced / Landing and enter the actual ARM."
-        )
-    return station
+    return matches[0] if matches else None
 
 
 def validate_quick_profile(profile: AircraftProfile) -> None:
@@ -162,33 +135,17 @@ def _apply_seat_or_baggage_load(
     label: str,
     total_weight: Decimal,
     total_moment: Decimal,
-) -> tuple[Decimal, Decimal, QuickStationLimitViolation | None]:
-    """Apply a normal load and report a published station-limit exceedance as a result.
-
-    Exceeding a station limit is an out-of-limits loading condition, not malformed input. The
-    quick flow must therefore finish the calculation and, for baggage, be able to recommend the
-    amount to remove instead of failing with a generic validation error.
-    """
+) -> tuple[Decimal, Decimal]:
     _validate_non_negative_finite(weight_lb, f"{label} weight")
     station = quick_station_for_type(profile, station_type, label)
     if station is None:
         if weight_lb > 0:
             raise InvalidInputError(f"This aircraft has no {label.lower()} station configured")
-        return total_weight, total_moment, None
-
-    violation = None
-    if station.maximum_weight_lb is not None and weight_lb > station.maximum_weight_lb:
-        violation = QuickStationLimitViolation(
-            station_id=station.station_id,
-            station_name=station.name,
-            actual_weight_lb=weight_lb,
-            maximum_weight_lb=station.maximum_weight_lb,
-        )
+        return total_weight, total_moment
 
     return (
         total_weight + weight_lb,
         total_moment + weight_lb * station.default_arm_in,
-        violation,
     )
 
 
@@ -223,14 +180,13 @@ def run_quick_calculation(
     validate_quick_profile(profile)
     total_weight = profile.basic_empty_weight_lb
     total_moment = profile.basic_empty_moment_lb_in
-    station_violations: list[QuickStationLimitViolation] = []
 
     for station_type, weight, label in (
         (StationType.FRONT_SEATS, front_lb, "Front seats"),
         (StationType.REAR_SEATS, rear_lb, "Rear seats"),
         (StationType.BAGGAGE, baggage_lb, "Baggage"),
     ):
-        total_weight, total_moment, violation = _apply_seat_or_baggage_load(
+        total_weight, total_moment = _apply_seat_or_baggage_load(
             profile,
             station_type,
             weight,
@@ -238,15 +194,6 @@ def run_quick_calculation(
             total_weight,
             total_moment,
         )
-        if violation is not None:
-            station_violations.append(violation)
-
-    # Zero-fuel weight is evaluated before usable fuel is added.
-    zero_fuel_weight = total_weight
-    zero_fuel_status = _limit_status(zero_fuel_weight, profile.max_zero_fuel_weight_lb)
-    station_status = (
-        LimitStatus.OUT_OF_LIMITS if station_violations else LimitStatus.WITHIN
-    )
 
     _validate_non_negative_finite(total_fuel_gal, "Total fuel")
     tanks = [
@@ -280,9 +227,7 @@ def run_quick_calculation(
         else (cg_from_max, cg_from_min)
     )
 
-    takeoff_weight_status = _limit_status(total_weight, profile.max_takeoff_weight_lb)
-    weight_status = _worse(takeoff_weight_status, zero_fuel_status)
-    weight_status = _worse(weight_status, station_status)
+    weight_status = _limit_status(total_weight, profile.max_takeoff_weight_lb)
 
     fuel_range_status, forward_check, aft_check = classify_cg_range(
         profile.envelope, total_weight, cg_forward, cg_aft
@@ -304,12 +249,6 @@ def run_quick_calculation(
     return QuickCalculationResult(
         total_weight_lb=total_weight,
         weight_limit_lb=profile.max_takeoff_weight_lb,
-        takeoff_weight_status=takeoff_weight_status,
-        zero_fuel_weight_lb=zero_fuel_weight,
-        zero_fuel_limit_lb=profile.max_zero_fuel_weight_lb,
-        zero_fuel_status=zero_fuel_status,
-        station_status=station_status,
-        station_violations=tuple(station_violations),
         weight_status=weight_status,
         fuel_allocation=allocation,
         cg_forward=cg_forward,

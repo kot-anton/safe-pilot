@@ -28,7 +28,6 @@ def make_test_profile(**overrides) -> AircraftProfile:
                 name="Baggage Area 1",
                 station_type=StationType.BAGGAGE,
                 default_arm_in=D("95.0"),
-                maximum_weight_lb=D("120"),
             ),
             StationProfile(
                 station_id="main_fuel",
@@ -66,7 +65,6 @@ def make_test_profile(**overrides) -> AircraftProfile:
         max_takeoff_weight_lb=D("2550"),
         max_ramp_weight_lb=D("2560"),
         max_landing_weight_lb=D("2440"),
-        max_zero_fuel_weight_lb=None,
         stations=stations,
         envelope=envelope,
     )

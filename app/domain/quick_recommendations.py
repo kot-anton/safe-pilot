@@ -19,7 +19,7 @@ from app.domain.quick_calculation import (
     quick_station_for_type,
     run_quick_calculation,
 )
-from app.domain.recommendations import ADDED_LOAD_NOTE, FUEL_REDUCTION_NOTE
+from app.domain.recommendations import FUEL_REDUCTION_NOTE
 from app.domain.units import compact_decimal, lb_to_kg
 
 LOAD_STEP_LB = Decimal("1")
@@ -29,7 +29,6 @@ MAX_FUEL_STEPS = 5000
 
 
 class QuickRecommendationKind(str, Enum):
-    ADD_BAGGAGE = "ADD_BAGGAGE"
     REDUCE_BAGGAGE = "REDUCE_BAGGAGE"
     REDUCE_FUEL = "REDUCE_FUEL"
 
@@ -48,15 +47,6 @@ class QuickRecommendation:
         def display(value: Decimal) -> str:
             return compact_decimal(value, decimal_places=1)
 
-        if self.kind == QuickRecommendationKind.ADD_BAGGAGE:
-            kg = lb_to_kg(self.delta_lb)
-            text = (
-                f"Add {display(self.delta_lb)} lb ({display(kg)} kg) of permitted, secured load "
-                f"to {self.station_name}."
-            )
-            if self.target_baggage_lb is not None:
-                text += f" Target baggage load: {display(self.target_baggage_lb)} lb."
-            return text
         if self.kind == QuickRecommendationKind.REDUCE_BAGGAGE:
             kg = lb_to_kg(self.delta_lb)
             text = (
@@ -127,31 +117,6 @@ def generate_quick_recommendations(
     candidates: list[QuickRecommendation] = []
     baggage_station = quick_station_for_type(profile, StationType.BAGGAGE, "Baggage")
 
-    # Adding weight is useful primarily for a forward-CG condition. It is disabled when the
-    # compartment limit is unknown, because the solver cannot prove the proposed load is allowed.
-    if (
-        profile.envelope is not None
-        and baggage_station is not None
-        and baggage_station.maximum_weight_lb is not None
-        and baggage_lb < baggage_station.maximum_weight_lb
-    ):
-        headroom = baggage_station.maximum_weight_lb - baggage_lb
-        for step in range(1, min(int(headroom / LOAD_STEP_LB), MAX_LOAD_STEPS) + 1):
-            delta = LOAD_STEP_LB * step
-            target = baggage_lb + delta
-            result = _try_quick(profile, front_lb, rear_lb, target, total_fuel_gal)
-            if result and _candidate_is_acceptable(result):
-                candidates.append(
-                    QuickRecommendation(
-                        kind=QuickRecommendationKind.ADD_BAGGAGE,
-                        delta_lb=delta,
-                        station_name=baggage_station.name,
-                        target_baggage_lb=target,
-                        note=ADDED_LOAD_NOTE,
-                    )
-                )
-                break
-
     if baggage_station is not None and baggage_lb > 0:
         for step in range(1, min(int(baggage_lb / LOAD_STEP_LB), MAX_LOAD_STEPS) + 1):
             delta = LOAD_STEP_LB * step
@@ -188,9 +153,8 @@ def generate_quick_recommendations(
                 break
 
     priority = {
-        QuickRecommendationKind.ADD_BAGGAGE: 0,
-        QuickRecommendationKind.REDUCE_BAGGAGE: 1,
-        QuickRecommendationKind.REDUCE_FUEL: 2,
+        QuickRecommendationKind.REDUCE_BAGGAGE: 0,
+        QuickRecommendationKind.REDUCE_FUEL: 1,
     }
 
     def amount(recommendation: QuickRecommendation) -> Decimal:

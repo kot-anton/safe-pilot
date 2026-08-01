@@ -105,7 +105,6 @@ class AircraftRevision(Base):
     max_ramp_weight_lb: Mapped[Decimal | None] = mapped_column(NUM, nullable=True)
     max_takeoff_weight_lb: Mapped[Decimal] = mapped_column(NUM, nullable=False)
     max_landing_weight_lb: Mapped[Decimal | None] = mapped_column(NUM, nullable=True)
-    max_zero_fuel_weight_lb: Mapped[Decimal | None] = mapped_column(NUM, nullable=True)
     known_useful_load_lb: Mapped[Decimal | None] = mapped_column(NUM, nullable=True)
 
     source_document_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -186,10 +185,6 @@ class Station(Base):
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     station_type: Mapped[StationTypeEnum] = mapped_column(SAEnum(StationTypeEnum), nullable=False)
     default_arm_in: Mapped[Decimal] = mapped_column(NUM, nullable=False)
-    is_adjustable_arm: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    minimum_arm_in: Mapped[Decimal | None] = mapped_column(NUM, nullable=True)
-    maximum_arm_in: Mapped[Decimal | None] = mapped_column(NUM, nullable=True)
-    maximum_weight_lb: Mapped[Decimal | None] = mapped_column(NUM, nullable=True)
     maximum_volume_gal: Mapped[Decimal | None] = mapped_column(NUM, nullable=True)
     fuel_density_lb_per_gal: Mapped[Decimal | None] = mapped_column(NUM, nullable=True)
     display_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

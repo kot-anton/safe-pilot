@@ -42,6 +42,14 @@ async def pop_checkpoint(state: FSMContext) -> Any | None:
     return checkpoint
 
 
+async def has_history(state: FSMContext) -> bool:
+    """Whether Back has anything to return to -- lets a step's keyboard hide the Back button
+    when it's the first screen shown, instead of offering a button that always says "already
+    at the first step"."""
+    data = await state.get_data()
+    return bool(data.get(_HISTORY_KEY))
+
+
 async def goto(
     message: Message,
     state: FSMContext,

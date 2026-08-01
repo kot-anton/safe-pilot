@@ -25,8 +25,12 @@ from app.bot.handlers._common import (
     compact_decimal,
     fmt,
     parse_decimal,
+    recommendation_text,
     short_tank_label,
 )
+from app.bot.handlers._common import lang as _lang
+from app.bot.handlers._common import load_profile_and_aircraft as _load_profile_and_aircraft
+from app.bot.handlers.wizard_nav import goto, go_back, has_history
 from app.bot.keyboards.common import aircraft_list_keyboard, main_menu_keyboard
 from app.bot.states.quick_calc_wizard import QuickCalcWizard
 from app.bot.texts.i18n import t
@@ -41,32 +45,10 @@ from app.domain.quick_calculation import (
     run_quick_calculation,
     validate_quick_profile,
 )
-from app.services.aircraft_service import (
-    AircraftService,
-    build_domain_profile,
-    suspicious_non_fuel_stations,
-)
+from app.services.aircraft_service import AircraftService, suspicious_non_fuel_stations
 from app.services.flight_service import FlightService
 
 router = Router(name="quick_calculate")
-
-
-def _lang(user: User) -> str:
-    return user.language or "en"
-
-
-async def _load_profile_and_aircraft(
-    user_id: int, aircraft_id: int, aircraft_service: AircraftService
-):
-    aircraft = await aircraft_service.get_aircraft(user_id, aircraft_id)
-    if aircraft is None or aircraft.active_revision_id is None:
-        return None, None
-    revision = await aircraft_service.get_revision_for_user(
-        user_id, aircraft.active_revision_id
-    )
-    if revision is None:
-        return None, None
-    return aircraft, build_domain_profile(revision, aircraft)
 
 
 async def _last_quick_input(
@@ -98,7 +80,12 @@ async def _last_quick_input(
 
 
 def _step_keyboard(
-    lang: str, *, last_value: str | None, unit: str
+    lang: str,
+    *,
+    last_value: str | None,
+    unit: str,
+    show_zero: bool = True,
+    show_back: bool = False,
 ) -> InlineKeyboardMarkup:
     rows = []
     if last_value is not None:
@@ -115,16 +102,25 @@ def _step_keyboard(
                 )
             ]
         )
-    rows.append(
-        [InlineKeyboardButton(text=t("btn_zero_load", lang), callback_data="quick:zero")]
-    )
-    rows.append(
-        [InlineKeyboardButton(text=t("btn_cancel", lang), callback_data="quick:cancel")]
-    )
+    if show_zero:
+        rows.append(
+            [InlineKeyboardButton(text=t("btn_zero_load", lang), callback_data="quick:zero")]
+        )
+    footer = []
+    if show_back:
+        footer.append(
+            InlineKeyboardButton(text=t("btn_back", lang), callback_data="quick:back")
+        )
+    footer.append(InlineKeyboardButton(text=t("btn_cancel", lang), callback_data="quick:cancel"))
+    rows.append(footer)
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _fuel_keyboard(lang: str, *, full_gal: Decimal) -> InlineKeyboardMarkup:
+def _fuel_keyboard(
+    lang: str, *, full_gal: Decimal, show_back: bool = False
+) -> InlineKeyboardMarkup:
+    # No "no fuel" shortcut: the aircraft could not have taken off with zero usable fuel on
+    # board, so offering that as a one-tap option would just invite a nonsensical answer.
     rows = [
         [
             InlineKeyboardButton(
@@ -134,33 +130,20 @@ def _fuel_keyboard(lang: str, *, full_gal: Decimal) -> InlineKeyboardMarkup:
         ],
     ]
     rows.append(
-        [InlineKeyboardButton(text=t("btn_zero_fuel", lang), callback_data="quick:zero")]
-    )
-    rows.append(
         [
             InlineKeyboardButton(
                 text=t("btn_exact_tank_split", lang), callback_data="quick:advanced"
             )
         ]
     )
-    rows.append(
-        [InlineKeyboardButton(text=t("btn_cancel", lang), callback_data="quick:cancel")]
-    )
+    footer = []
+    if show_back:
+        footer.append(
+            InlineKeyboardButton(text=t("btn_back", lang), callback_data="quick:back")
+        )
+    footer.append(InlineKeyboardButton(text=t("btn_cancel", lang), callback_data="quick:cancel"))
+    rows.append(footer)
     return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def _confirm_keyboard(lang: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=t("btn_calculate", lang), callback_data="quick:calculate")],
-            [
-                InlineKeyboardButton(text=t("btn_edit", lang), callback_data="quick:edit"),
-                InlineKeyboardButton(
-                    text=t("btn_cancel", lang), callback_data="quick:cancel"
-                ),
-            ],
-        ]
-    )
 
 
 def _advanced_only_keyboard(lang: str) -> InlineKeyboardMarkup:
@@ -375,26 +358,34 @@ async def _begin(
         fuel_tank_labels=[
             short_tank_label(station.name) for station in profile.fuel_stations
         ],
+        _nav_history=[],
     )
     await message.answer(profile.tail_number, reply_markup=ReplyKeyboardRemove())
 
     if front_station is not None:
-        await _ask_front(message, state, user)
+        await goto(message, state, user, QuickCalcWizard.front, _ask_front, record_history=False)
     elif rear_station is not None:
-        await _ask_rear(message, state, user)
+        await goto(message, state, user, QuickCalcWizard.rear, _ask_rear, record_history=False)
     elif baggage_station is not None:
-        await _ask_baggage(message, state, user)
+        await goto(
+            message, state, user, QuickCalcWizard.baggage, _ask_baggage, record_history=False
+        )
     else:
-        await _ask_fuel(message, state, user)
+        await goto(message, state, user, QuickCalcWizard.fuel, _ask_fuel, record_history=False)
 
 
 async def _ask_front(message: Message, state: FSMContext, user: User) -> None:
     data = await state.get_data()
-    await state.set_state(QuickCalcWizard.front)
     await message.answer(
         t("quick_front_prompt", _lang(user)),
         reply_markup=_step_keyboard(
-            _lang(user), last_value=data.get("last_front_lb"), unit="lb"
+            _lang(user),
+            last_value=data.get("last_front_lb"),
+            unit="lb",
+            # The front seat always carries at least the pilot, so a "None" shortcut here
+            # would offer a combined weight of zero that can never actually be true.
+            show_zero=False,
+            show_back=await has_history(state),
         ),
     )
 
@@ -410,13 +401,6 @@ async def got_front(message: Message, state: FSMContext, user: User) -> None:
     await _advance_from_front(message, state, user)
 
 
-@router.callback_query(QuickCalcWizard.front, F.data == "quick:zero")
-async def zero_front(callback: CallbackQuery, state: FSMContext, user: User) -> None:
-    await state.update_data(front_lb="0")
-    await callback.answer()
-    await _advance_from_front(callback.message, state, user)
-
-
 @router.callback_query(QuickCalcWizard.front, F.data == "quick:use_last")
 async def use_last_front(callback: CallbackQuery, state: FSMContext, user: User) -> None:
     data = await state.get_data()
@@ -428,20 +412,22 @@ async def use_last_front(callback: CallbackQuery, state: FSMContext, user: User)
 async def _advance_from_front(message: Message, state: FSMContext, user: User) -> None:
     data = await state.get_data()
     if data["has_rear"]:
-        await _ask_rear(message, state, user)
+        await goto(message, state, user, QuickCalcWizard.rear, _ask_rear)
     elif data["has_baggage"]:
-        await _ask_baggage(message, state, user)
+        await goto(message, state, user, QuickCalcWizard.baggage, _ask_baggage)
     else:
-        await _ask_fuel(message, state, user)
+        await goto(message, state, user, QuickCalcWizard.fuel, _ask_fuel)
 
 
 async def _ask_rear(message: Message, state: FSMContext, user: User) -> None:
     data = await state.get_data()
-    await state.set_state(QuickCalcWizard.rear)
     await message.answer(
         t("quick_rear_prompt", _lang(user)),
         reply_markup=_step_keyboard(
-            _lang(user), last_value=data.get("last_rear_lb"), unit="lb"
+            _lang(user),
+            last_value=data.get("last_rear_lb"),
+            unit="lb",
+            show_back=await has_history(state),
         ),
     )
 
@@ -475,18 +461,20 @@ async def use_last_rear(callback: CallbackQuery, state: FSMContext, user: User) 
 async def _advance_from_rear(message: Message, state: FSMContext, user: User) -> None:
     data = await state.get_data()
     if data["has_baggage"]:
-        await _ask_baggage(message, state, user)
+        await goto(message, state, user, QuickCalcWizard.baggage, _ask_baggage)
     else:
-        await _ask_fuel(message, state, user)
+        await goto(message, state, user, QuickCalcWizard.fuel, _ask_fuel)
 
 
 async def _ask_baggage(message: Message, state: FSMContext, user: User) -> None:
     data = await state.get_data()
-    await state.set_state(QuickCalcWizard.baggage)
     await message.answer(
         t("quick_baggage_prompt", _lang(user)),
         reply_markup=_step_keyboard(
-            _lang(user), last_value=data.get("last_baggage_lb"), unit="lb"
+            _lang(user),
+            last_value=data.get("last_baggage_lb"),
+            unit="lb",
+            show_back=await has_history(state),
         ),
     )
 
@@ -499,14 +487,14 @@ async def got_baggage(message: Message, state: FSMContext, user: User) -> None:
         await message.answer(t("error_generic", _lang(user), detail=str(exc)))
         return
     await state.update_data(baggage_lb=str(value))
-    await _ask_fuel(message, state, user)
+    await goto(message, state, user, QuickCalcWizard.fuel, _ask_fuel)
 
 
 @router.callback_query(QuickCalcWizard.baggage, F.data == "quick:zero")
 async def zero_baggage(callback: CallbackQuery, state: FSMContext, user: User) -> None:
     await state.update_data(baggage_lb="0")
     await callback.answer()
-    await _ask_fuel(callback.message, state, user)
+    await goto(callback.message, state, user, QuickCalcWizard.fuel, _ask_fuel)
 
 
 @router.callback_query(QuickCalcWizard.baggage, F.data == "quick:use_last")
@@ -516,13 +504,12 @@ async def use_last_baggage(
     data = await state.get_data()
     await state.update_data(baggage_lb=data.get("last_baggage_lb") or "0")
     await callback.answer()
-    await _ask_fuel(callback.message, state, user)
+    await goto(callback.message, state, user, QuickCalcWizard.fuel, _ask_fuel)
 
 
 async def _ask_fuel(message: Message, state: FSMContext, user: User) -> None:
     data = await state.get_data()
     tank_labels = data.get("fuel_tank_labels") or []
-    await state.set_state(QuickCalcWizard.fuel)
     await message.answer(
         t(
             "quick_fuel_prompt_tanks" if tank_labels else "quick_fuel_prompt",
@@ -532,37 +519,54 @@ async def _ask_fuel(message: Message, state: FSMContext, user: User) -> None:
         reply_markup=_fuel_keyboard(
             _lang(user),
             full_gal=Decimal(data["full_fuel_gal"]),
+            show_back=await has_history(state),
         ),
     )
 
 
 @router.message(QuickCalcWizard.fuel, F.text)
-async def got_fuel(message: Message, state: FSMContext, user: User) -> None:
+async def got_fuel(
+    message: Message,
+    state: FSMContext,
+    user: User,
+    aircraft_service: AircraftService,
+    flight_service: FlightService,
+) -> None:
     try:
         value = parse_decimal(message.text)
     except InputParseError as exc:
         await message.answer(t("error_generic", _lang(user), detail=str(exc)))
         return
-    await _finish_fuel(message, state, user, value)
+    await _finish_fuel(message, state, user, value, aircraft_service, flight_service)
 
 
 @router.callback_query(QuickCalcWizard.fuel, F.data == "quick:full")
-async def full_fuel(callback: CallbackQuery, state: FSMContext, user: User) -> None:
+async def full_fuel(
+    callback: CallbackQuery,
+    state: FSMContext,
+    user: User,
+    aircraft_service: AircraftService,
+    flight_service: FlightService,
+) -> None:
     data = await state.get_data()
     await callback.answer()
     await _finish_fuel(
-        callback.message, state, user, Decimal(data["full_fuel_gal"])
+        callback.message,
+        state,
+        user,
+        Decimal(data["full_fuel_gal"]),
+        aircraft_service,
+        flight_service,
     )
 
 
-@router.callback_query(QuickCalcWizard.fuel, F.data == "quick:zero")
-async def zero_fuel(callback: CallbackQuery, state: FSMContext, user: User) -> None:
-    await callback.answer()
-    await _finish_fuel(callback.message, state, user, Decimal("0"))
-
-
 async def _finish_fuel(
-    message: Message, state: FSMContext, user: User, value: Decimal
+    message: Message,
+    state: FSMContext,
+    user: User,
+    value: Decimal,
+    aircraft_service: AircraftService,
+    flight_service: FlightService,
 ) -> None:
     data = await state.get_data()
     full = Decimal(data["full_fuel_gal"])
@@ -572,24 +576,10 @@ async def _finish_fuel(
         )
         return
     await state.update_data(total_fuel_gal=str(value))
-    await _show_confirmation(message, state, user)
-
-
-async def _show_confirmation(
-    message: Message, state: FSMContext, user: User
-) -> None:
-    data = await state.get_data()
-    lang = _lang(user)
-    lines = [data["tail_number"], ""]
-    if data["has_front"]:
-        lines.append(f"{t('quick_review_front', lang)}: {fmt(Decimal(data['front_lb']), ' lb')}")
-    if data["has_rear"]:
-        lines.append(f"{t('quick_review_rear', lang)}: {fmt(Decimal(data['rear_lb']), ' lb')}")
-    if data["has_baggage"]:
-        lines.append(f"{t('quick_review_baggage', lang)}: {fmt(Decimal(data['baggage_lb']), ' lb')}")
-    lines.append(f"{t('quick_review_fuel', lang)}: {fmt(Decimal(data['total_fuel_gal']), ' gal')}")
-    await state.set_state(QuickCalcWizard.review)
-    await message.answer("\n".join(lines), reply_markup=_confirm_keyboard(lang))
+    # No separate "confirm your inputs, tap Calculate" screen -- the entered values are
+    # summarized right above the result instead, and "Change load" (on the result message)
+    # is the way back if something needs correcting.
+    await _calculate_and_show_result(message, state, user, aircraft_service, flight_service)
 
 
 @router.callback_query(QuickCalcWizard.review, F.data == "quick:edit")
@@ -615,6 +605,24 @@ async def quick_edit(
             "baggage_lb": data.get("baggage_lb", "0"),
         },
     )
+
+
+_STEP_RENDERERS = {
+    QuickCalcWizard.front.state: _ask_front,
+    QuickCalcWizard.rear.state: _ask_rear,
+    QuickCalcWizard.baggage.state: _ask_baggage,
+    QuickCalcWizard.fuel.state: _ask_fuel,
+}
+
+
+async def _cannot_go_back(message: Message, state: FSMContext, user: User) -> None:
+    await message.answer(t("already_first_step", _lang(user)))
+
+
+@router.callback_query(StateFilter(QuickCalcWizard), F.data == "quick:back")
+async def quick_back(callback: CallbackQuery, state: FSMContext, user: User) -> None:
+    await go_back(callback.message, state, user, _STEP_RENDERERS, _cannot_go_back)
+    await callback.answer()
 
 
 @router.callback_query(F.data == "quick:cancel")
@@ -668,10 +676,6 @@ def _result_header(result: QuickCalculationResult) -> str:
     if result.fuel_range_status is None:
         if not load_limit_out:
             return "⚠️ CG LIMITS NOT EVALUATED"
-        if result.station_status == LimitStatus.OUT_OF_LIMITS:
-            return "❌ STATION LOAD LIMIT EXCEEDED — CG LIMITS NOT EVALUATED"
-        if result.zero_fuel_status == LimitStatus.OUT_OF_LIMITS:
-            return "❌ ZERO-FUEL WEIGHT EXCEEDED — CG LIMITS NOT EVALUATED"
         return "❌ OVERWEIGHT — CG LIMITS NOT EVALUATED"
 
     direction = _cg_violation_direction(result)
@@ -688,10 +692,6 @@ def _result_header(result: QuickCalculationResult) -> str:
         suffix = f" — {direction.upper()} CG" if direction else ""
         return f"❌ LOAD AND CG OUT OF LIMITS{suffix}"
     if load_limit_out:
-        if result.station_status == LimitStatus.OUT_OF_LIMITS:
-            return "❌ STATION LOAD LIMIT EXCEEDED"
-        if result.zero_fuel_status == LimitStatus.OUT_OF_LIMITS:
-            return "❌ ZERO-FUEL WEIGHT EXCEEDED"
         return "❌ OVERWEIGHT"
     if cg_out:
         if direction == "forward":
@@ -713,23 +713,6 @@ def _result_text(
         margin = result.weight_margin_lb
         word = "below maximum" if margin >= 0 else "over maximum"
         lines.append(f"{fmt(abs(margin), ' lb')} {word}")
-
-    if result.zero_fuel_limit_lb is not None:
-        lines.append(
-            f"Zero-fuel: {fmt(result.zero_fuel_weight_lb, ' lb')} / "
-            f"{fmt(result.zero_fuel_limit_lb, ' lb')}"
-        )
-    for station_violation in result.station_violations:
-        excess = (
-            station_violation.actual_weight_lb
-            - station_violation.maximum_weight_lb
-        )
-        lines.append(
-            f"{station_violation.station_name}: "
-            f"{fmt(station_violation.actual_weight_lb, ' lb')} / "
-            f"{fmt(station_violation.maximum_weight_lb, ' lb')} "
-            f"({fmt(excess, ' lb')} over station limit)"
-        )
 
     lines.extend(["", "CG"])
     if result.fuel_range_status is None:
@@ -773,9 +756,29 @@ def _result_text(
     return "\n".join(lines)
 
 
-@router.callback_query(QuickCalcWizard.review, F.data == "quick:calculate")
-async def quick_calculate_confirm(
-    callback: CallbackQuery,
+def _quick_review_lines(
+    data: dict,
+    *,
+    tail_number: str,
+    front: Decimal,
+    rear: Decimal,
+    baggage: Decimal,
+    total_fuel: Decimal,
+    lang: str,
+) -> list[str]:
+    lines = [tail_number, ""]
+    if data["has_front"]:
+        lines.append(f"{t('quick_review_front', lang)}: {fmt(front, ' lb')}")
+    if data["has_rear"]:
+        lines.append(f"{t('quick_review_rear', lang)}: {fmt(rear, ' lb')}")
+    if data["has_baggage"]:
+        lines.append(f"{t('quick_review_baggage', lang)}: {fmt(baggage, ' lb')}")
+    lines.append(f"{t('quick_review_fuel', lang)}: {fmt(total_fuel, ' gal')}")
+    return lines
+
+
+async def _calculate_and_show_result(
+    message: Message,
     state: FSMContext,
     user: User,
     aircraft_service: AircraftService,
@@ -788,11 +791,10 @@ async def quick_calculate_confirm(
             user.id, data["aircraft_id"], aircraft_service
         )
     except DomainError as exc:
-        await callback.message.answer(t("aircraft_profile_invalid", lang, detail=str(exc)))
-        await callback.answer()
+        await message.answer(t("aircraft_profile_invalid", lang, detail=str(exc)))
         return
     if aircraft is None or profile is None:
-        await callback.answer(t("no_aircraft_selected", lang), show_alert=True)
+        await message.answer(t("no_aircraft_selected", lang))
         await state.clear()
         return
 
@@ -809,8 +811,7 @@ async def quick_calculate_confirm(
             total_fuel_gal=total_fuel,
         )
     except DomainError as exc:
-        await callback.message.answer(t("error_generic", lang, detail=str(exc)))
-        await callback.answer()
+        await message.answer(t("error_generic", lang, detail=str(exc)))
         return
 
     quick_input = {
@@ -827,10 +828,24 @@ async def quick_calculate_confirm(
         result=result,
     )
 
-    await callback.message.answer(_result_text(result, profile.tail_number, lang))
+    # Keep review state so Change Load can restart with the same aircraft.
+    await state.set_state(QuickCalcWizard.review)
+
+    summary_lines = _quick_review_lines(
+        data,
+        tail_number=profile.tail_number,
+        front=front,
+        rear=rear,
+        baggage=baggage,
+        total_fuel=total_fuel,
+        lang=lang,
+    )
+    await message.answer("\n".join(summary_lines))
+
+    await message.answer(_result_text(result, profile.tail_number, lang))
 
     if result.fuel_range_status == FuelRangeStatus.EXACT_SPLIT_REQUIRED:
-        await callback.message.answer(t("exact_tank_split_required", lang))
+        await message.answer(t("exact_tank_split_required", lang))
 
     if result.overall_status == LimitStatus.OUT_OF_LIMITS:
         recommendations = flight_service.recommend_quick(
@@ -840,19 +855,9 @@ async def quick_calculate_confirm(
             baggage_lb=baggage,
             total_fuel_gal=total_fuel,
         )
-        if recommendations:
-            lines = [t("recommendations_header", lang)]
-            for index, recommendation in enumerate(recommendations, start=1):
-                lines.append(f"{index}. {recommendation.describe()}")
-                if recommendation.note:
-                    lines.append(f"   {recommendation.note}")
-            await callback.message.answer("\n".join(lines))
-        else:
-            await callback.message.answer(t("no_recommendations", lang))
+        await message.answer(recommendation_text(recommendations, lang))
 
-    await callback.message.answer(t("what_next", lang), reply_markup=_result_keyboard(lang))
-    # Keep review state so Change Load can restart with the same aircraft.
-    await callback.answer()
+    await message.answer(t("what_next", lang), reply_markup=_result_keyboard(lang))
 
 
 @router.message(StateFilter(QuickCalcWizard))

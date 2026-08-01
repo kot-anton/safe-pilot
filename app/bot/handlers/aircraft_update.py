@@ -72,16 +72,6 @@ async def update_aircraft_chosen(
             "name": s.name,
             "station_type": s.station_type.value,
             "default_arm_in": compact_decimal(s.default_arm_in),
-            "is_adjustable_arm": s.is_adjustable_arm,
-            "minimum_arm_in": compact_decimal(s.minimum_arm_in)
-            if s.minimum_arm_in is not None
-            else None,
-            "maximum_arm_in": compact_decimal(s.maximum_arm_in)
-            if s.maximum_arm_in is not None
-            else None,
-            "maximum_weight_lb": compact_decimal(s.maximum_weight_lb)
-            if s.maximum_weight_lb is not None
-            else None,
             "maximum_volume_gal": compact_decimal(s.maximum_volume_gal)
             if s.maximum_volume_gal is not None
             else None,
@@ -117,9 +107,6 @@ async def update_aircraft_chosen(
         max_takeoff_weight_lb=compact_decimal(revision.max_takeoff_weight_lb),
         max_landing_weight_lb=compact_decimal(revision.max_landing_weight_lb)
         if revision.max_landing_weight_lb is not None
-        else None,
-        max_zero_fuel_weight_lb=compact_decimal(revision.max_zero_fuel_weight_lb)
-        if revision.max_zero_fuel_weight_lb is not None
         else None,
         known_useful_load_lb=compact_decimal(revision.known_useful_load_lb)
         if revision.known_useful_load_lb is not None

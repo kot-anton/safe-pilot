@@ -87,13 +87,10 @@ async def test_full_add_aircraft_wizard_walkthrough_creates_a_correct_aircraft(s
         await aircraft_wizard.got_max_takeoff_weight(_FakeMessage("2500"), state, user)
         assert state.current_state == AircraftWizard.max_landing_weight
 
-        # 7. Landing weight and MZFW both skipped.
+        # 7. Landing weight skipped -- straight to the station loop (no MZFW question, no Known
+        # Useful Load question).
         skip_landing_cb = _FakeCallback(_FakeMessage())
         await aircraft_wizard.skip_max_landing_weight(skip_landing_cb, state, user)
-        assert state.current_state == AircraftWizard.max_zfw
-        skip_zfw_cb = _FakeCallback(_FakeMessage())
-        await aircraft_wizard.skip_max_zfw(skip_zfw_cb, state, user)
-        # No Known Useful Load question -- straight to the station loop.
         assert state.current_state == AircraftWizard.station_add_prompt
         assert "known_useful_load_lb" not in state.data or state.data["known_useful_load_lb"] is None
 
@@ -130,12 +127,14 @@ async def test_full_add_aircraft_wizard_walkthrough_creates_a_correct_aircraft(s
         assert fuel_station["station_type"] == StationTypeEnum.FUEL.value
         assert fuel_station["fuel_density_lb_per_gal"] == "6.0"
 
-        # 10. Done adding stations -- goes straight to the CG envelope with a read-only fuel
-        # recap folded into the prompt (no separate "total usable fuel" question).
+        # 10. Done adding stations -- a read-only tank-capacity recap is sent as its own message,
+        # then the wizard goes straight to the CG envelope (no separate "total usable fuel"
+        # question).
         done_cb = _FakeCallback(_FakeMessage())
         await aircraft_wizard.stations_done(done_cb, state, user)
         assert state.current_state == AircraftWizard.envelope_rows
-        assert "Tanks total: 40 gal" in done_cb.message.answers[-1][0]
+        assert done_cb.message.answers[-2][0] == "Configured tanks: 40 gal usable"
+        assert "Enter one CG-envelope row per message" in done_cb.message.answers[-1][0]
 
         # 11. Skip the CG envelope.
         skip_envelope_cb = _FakeCallback(_FakeMessage())

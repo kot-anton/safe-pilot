@@ -15,7 +15,7 @@ from app.bot.handlers.quick_calculate import (
     calculation_mode_keyboard,
     show_calculation_options,
 )
-from app.bot.keyboards.common import aircraft_list_keyboard, main_menu_keyboard
+from app.bot.keyboards.common import aircraft_list_keyboard, envelope_keyboard, main_menu_keyboard
 from app.bot.middlewares.db_session import preferred_language
 from app.bot.states.aircraft_wizard import AircraftWizard
 from app.bot.texts.i18n import STRINGS
@@ -106,14 +106,11 @@ def test_aircraft_review_is_compact_and_hides_internal_station_enums():
         "max_ramp_weight_lb": "2785",
         "max_takeoff_weight_lb": "2775",
         "max_landing_weight_lb": "2775",
-        "max_zero_fuel_weight_lb": None,
         "stations": [
             {
                 "name": "Rear Seats",
                 "station_type": "REAR_SEATS",
                 "default_arm_in": "118",
-                "is_adjustable_arm": False,
-                "maximum_weight_lb": None,
                 "maximum_volume_gal": None,
                 "fuel_density_lb_per_gal": None,
             },
@@ -121,8 +118,6 @@ def test_aircraft_review_is_compact_and_hides_internal_station_enums():
                 "name": "Main Fuel Tanks",
                 "station_type": "FUEL",
                 "default_arm_in": "75",
-                "is_adjustable_arm": False,
-                "maximum_weight_lb": None,
                 "maximum_volume_gal": "40",
                 "fuel_density_lb_per_gal": "6",
             },
@@ -130,8 +125,6 @@ def test_aircraft_review_is_compact_and_hides_internal_station_enums():
                 "name": "Front Seats",
                 "station_type": "FRONT_SEATS",
                 "default_arm_in": "89",
-                "is_adjustable_arm": False,
-                "maximum_weight_lb": None,
                 "maximum_volume_gal": None,
                 "fuel_density_lb_per_gal": None,
             },
@@ -139,8 +132,6 @@ def test_aircraft_review_is_compact_and_hides_internal_station_enums():
                 "name": "Aux Fuel Tanks",
                 "station_type": "FUEL",
                 "default_arm_in": "94",
-                "is_adjustable_arm": False,
-                "maximum_weight_lb": None,
                 "maximum_volume_gal": "13.0000",
                 "fuel_density_lb_per_gal": "6",
             },
@@ -170,8 +161,22 @@ def test_aircraft_review_is_compact_and_hides_internal_station_enums():
     assert "Usable: 40 gal" in summary
     assert "Usable: 13 gal" in summary
     assert "Density:" not in summary
-    assert "Max Zero Fuel Weight" not in summary
     assert summary.index("Front Seats") < summary.index("Rear Seats")
+
+
+def test_envelope_keyboard_offers_edit_alongside_remove_only_once_rows_exist():
+    """Fixing one typo in an envelope row used to mean deleting the whole row and re-typing all
+    three numbers. Edit now sits next to Remove, matching the Edit/Remove pattern already used
+    for stations -- but neither makes sense to show before any row has been entered."""
+    no_rows = envelope_keyboard("en", has_rows=False)
+    with_rows = envelope_keyboard("en", has_rows=True)
+
+    no_rows_callbacks = _inline_callbacks(no_rows)
+    with_rows_callbacks = _inline_callbacks(with_rows)
+    assert "wizard:edit_row_prompt" not in no_rows_callbacks
+    assert "wizard:remove_row_prompt" not in no_rows_callbacks
+    assert "wizard:edit_row_prompt" in with_rows_callbacks
+    assert "wizard:remove_row_prompt" in with_rows_callbacks
 
 
 def test_aircraft_picker_label_uses_nickname_not_model():
@@ -211,8 +216,6 @@ def test_calculation_shortcuts_do_not_offer_literal_zero_buttons():
     advanced_load = _load_keyboard(
         "en",
         last_value="180.0000",
-        last_arm=None,
-        adjustable=False,
         show_back=False,
     )
     advanced_fuel = _fuel_start_keyboard("en", capacity=Decimal("20"))
@@ -231,7 +234,7 @@ def test_calculation_shortcuts_do_not_offer_literal_zero_buttons():
     assert "quick:use_last" not in _inline_callbacks(quick_fuel)
     assert "flight:use_last_fuel" not in _inline_callbacks(advanced_fuel)
     assert quick_load.inline_keyboard[0][0].text == "Use last: 180 lb"
-    assert "Full tanks — 53 gal usable" == quick_fuel.inline_keyboard[0][0].text
+    assert "Full tanks (53 gal usable)" == quick_fuel.inline_keyboard[0][0].text
     assert all(
         "Use last" not in button.text
         for keyboard in (quick_fuel, advanced_fuel)
@@ -240,18 +243,22 @@ def test_calculation_shortcuts_do_not_offer_literal_zero_buttons():
     )
 
 
-def test_quick_calc_offers_one_tap_zero_shortcuts():
-    """A pilot with an empty seat/no baggage/dry tanks can tap a "0" shortcut instead of
-    typing it -- the callback these buttons emit must match what quick_calculate.py listens
+def test_quick_calc_offers_one_tap_zero_shortcut_for_rear_and_baggage_only():
+    """A pilot with an empty rear seat or no baggage can tap a "None" shortcut instead of
+    typing it -- the callback this button emits must match what quick_calculate.py listens
     for (quick:zero), reachable buttons registered without a handler are as useless as an
-    unreachable handler."""
+    unreachable handler. Front seat and fuel never offer this shortcut: the front seat always
+    carries at least the pilot, and the aircraft could not have taken off with zero usable
+    fuel on board, so a "None"/"0" answer there is never actually valid."""
     quick_load = _step_keyboard("en", last_value=None, unit="lb")
+    front_load = _step_keyboard("en", last_value=None, unit="lb", show_zero=False)
     quick_fuel = _fuel_keyboard("en", full_gal=Decimal("53.0000"))
 
     load_callbacks = _inline_callbacks(quick_load)
     fuel_callbacks = _inline_callbacks(quick_fuel)
     assert "quick:zero" in load_callbacks
-    assert "quick:zero" in fuel_callbacks
+    assert "quick:zero" not in _inline_callbacks(front_load)
+    assert "quick:zero" not in fuel_callbacks
 
     load_zero_button = next(
         button
@@ -259,14 +266,40 @@ def test_quick_calc_offers_one_tap_zero_shortcuts():
         for button in row
         if button.callback_data == "quick:zero"
     )
-    fuel_zero_button = next(
-        button
-        for row in quick_fuel.inline_keyboard
-        for button in row
-        if button.callback_data == "quick:zero"
+    assert load_zero_button.text == "None"
+
+
+def test_advanced_load_keyboard_offers_same_none_shortcut_except_for_the_front_seat():
+    """Advanced should read like Quick calc: a "None" shortcut (same callback the pre-existing
+    Skip handler already listens for) on every station's load question except the front seat,
+    which always carries at least the pilot."""
+    rear_or_baggage = _load_keyboard(
+        "en", last_value=None, show_back=False
     )
-    assert load_zero_button.text == "0 (none)"
-    assert fuel_zero_button.text == "0 (no fuel)"
+    front_seat = _load_keyboard(
+        "en", last_value=None, show_back=False, show_zero=False
+    )
+
+    assert "wizard:skip" in _inline_callbacks(rear_or_baggage)
+    assert "wizard:skip" not in _inline_callbacks(front_seat)
+
+    zero_button = next(
+        button
+        for row in rear_or_baggage.inline_keyboard
+        for button in row
+        if button.callback_data == "wizard:skip"
+    )
+    assert zero_button.text == "None"
+
+
+def test_advanced_fuel_start_keyboard_only_offers_none_shortcut_for_extra_tanks():
+    """A tank isn't offered a "None" shortcut unless it's not the aircraft's only fuel
+    source -- same reasoning as Quick calc having no zero-fuel shortcut at all."""
+    sole_tank = _fuel_start_keyboard("en", capacity=Decimal("20"))
+    one_of_several = _fuel_start_keyboard("en", capacity=Decimal("20"), show_zero=True)
+
+    assert "wizard:skip" not in _inline_callbacks(sole_tank)
+    assert "wizard:skip" in _inline_callbacks(one_of_several)
 
 
 def test_new_user_language_is_always_english():

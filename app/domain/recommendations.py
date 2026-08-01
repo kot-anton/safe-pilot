@@ -35,7 +35,6 @@ class RecommendationKind(str, Enum):
     REDUCE_FUEL = "REDUCE_FUEL"
     ADD_FUEL = "ADD_FUEL"
     REDUCE_BAGGAGE = "REDUCE_BAGGAGE"
-    ADD_BAGGAGE = "ADD_BAGGAGE"
     MOVE_LOAD = "MOVE_LOAD"
     SHIFT_FUEL = "SHIFT_FUEL"
 
@@ -52,7 +51,6 @@ class Recommendation:
     note: str | None = None
     resulting_gal: Decimal | None = None
     tank_capacity_gal: Decimal | None = None
-    resulting_station_weight_lb: Decimal | None = None
 
     def describe(self) -> str:
         def display(value: Decimal) -> str:
@@ -88,18 +86,6 @@ class Recommendation:
                 f"Remove {display(self.delta_lb)} lb ({display(kg)} kg) from "
                 f"{self.station_name}."
             )
-        if self.kind == RecommendationKind.ADD_BAGGAGE:
-            kg = lb_to_kg(self.delta_lb)
-            text = (
-                f"Add {display(self.delta_lb)} lb ({display(kg)} kg) of permitted, secured load "
-                f"to {self.station_name}."
-            )
-            if self.resulting_station_weight_lb is not None:
-                text += (
-                    " Target compartment load: "
-                    f"{display(self.resulting_station_weight_lb)} lb."
-                )
-            return text
         if self.kind == RecommendationKind.MOVE_LOAD:
             kg = lb_to_kg(self.delta_lb)
             return (
@@ -190,10 +176,6 @@ def _search_move_load(
                 continue
             destination_weight = _current_load_weight(calc_input, destination.station_id)
             headroom = source_weight
-            if destination.maximum_weight_lb is not None:
-                headroom = min(
-                    headroom, destination.maximum_weight_lb - destination_weight
-                )
             if headroom <= 0:
                 continue
             steps = min(int(headroom / LOAD_STEP_LB), MAX_STEPS)
@@ -218,40 +200,6 @@ def _search_move_load(
                         )
                     )
                     break
-    return results
-
-
-def _search_add_baggage(
-    profile: AircraftProfile, calc_input: CalculationInput
-) -> list[Recommendation]:
-    results: list[Recommendation] = []
-    for station in profile.baggage_stations:
-        # Never recommend adding an unknown amount to a compartment whose published maximum
-        # was not entered. The math might work, but the physical compartment limit is unknown.
-        if station.maximum_weight_lb is None:
-            continue
-        current = _current_load_weight(calc_input, station.station_id)
-        headroom = station.maximum_weight_lb - current
-        if headroom <= 0:
-            continue
-        steps = min(int(headroom / LOAD_STEP_LB), MAX_STEPS)
-        for step in range(1, steps + 1):
-            delta = LOAD_STEP_LB * step
-            target = current + delta
-            candidate = _replace_load(calc_input, station.station_id, target)
-            result = _try_calculate(profile, candidate)
-            if result and _is_acceptable(result.overall_status):
-                results.append(
-                    Recommendation(
-                        kind=RecommendationKind.ADD_BAGGAGE,
-                        station_id=station.station_id,
-                        station_name=station.name,
-                        delta_lb=delta,
-                        resulting_station_weight_lb=target,
-                        note=ADDED_LOAD_NOTE,
-                    )
-                )
-                break
     return results
 
 
@@ -403,11 +351,10 @@ def _search_add_fuel(
 
 _CATEGORY_PRIORITY = {
     RecommendationKind.MOVE_LOAD: 0,
-    RecommendationKind.ADD_BAGGAGE: 1,
-    RecommendationKind.REDUCE_BAGGAGE: 2,
-    RecommendationKind.REDUCE_FUEL: 3,
-    RecommendationKind.SHIFT_FUEL: 4,
-    RecommendationKind.ADD_FUEL: 5,
+    RecommendationKind.REDUCE_BAGGAGE: 1,
+    RecommendationKind.REDUCE_FUEL: 2,
+    RecommendationKind.SHIFT_FUEL: 3,
+    RecommendationKind.ADD_FUEL: 4,
 }
 
 
@@ -430,7 +377,6 @@ def generate_recommendations(
 
     candidates: list[Recommendation] = []
     candidates += _search_move_load(profile, calc_input)
-    candidates += _search_add_baggage(profile, calc_input)
     candidates += _search_reduce_baggage(profile, calc_input)
     candidates += _search_reduce_fuel(profile, calc_input, min_fuel_gal)
     if allow_fuel_transfer:
