@@ -127,11 +127,11 @@ def test_recommendation_moves_load_between_stations():
         stations=[
             StationProfile(
                 station_id="baggage_aft", name="Aft Baggage", station_type=StationType.BAGGAGE,
-                default_arm_in=D("150.0"), maximum_weight_lb=D("300"),
+                default_arm_in=D("150.0"),
             ),
             StationProfile(
                 station_id="baggage_fwd", name="Forward Baggage", station_type=StationType.BAGGAGE,
-                default_arm_in=D("20.0"), maximum_weight_lb=D("300"),
+                default_arm_in=D("20.0"),
             ),
             StationProfile(
                 station_id="main_fuel", name="Main Fuel", station_type=StationType.FUEL,
@@ -259,14 +259,12 @@ def test_recommendation_does_not_move_ambiguous_custom_load():
                 name="Equipment Box",
                 station_type=StationType.CUSTOM,
                 default_arm_in=D("150"),
-                maximum_weight_lb=D("300"),
             ),
             StationProfile(
                 station_id="baggage_forward",
                 name="Forward Baggage",
                 station_type=StationType.BAGGAGE,
                 default_arm_in=D("20"),
-                maximum_weight_lb=D("300"),
             ),
         ],
         envelope=CGEnvelope(

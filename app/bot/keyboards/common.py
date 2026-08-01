@@ -137,24 +137,6 @@ def cg_or_moment_keyboard(lang: str, *, show_keep: bool = False, show_back: bool
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def arm_fixed_adjustable_keyboard(lang: str, *, show_back: bool = True) -> InlineKeyboardMarkup:
-    """Fixed ARM is the common case (one published number) and gets the prominent button.
-    Adjustable (a published forward/aft range, e.g. some adjustable seat rails) is offered
-    as a secondary, opt-in option -- not asked as if it were equally likely by default."""
-    rows = [
-        [InlineKeyboardButton(text=f"✅ {t('btn_arm_fixed', lang)}", callback_data="wizard:arm_fixed")],
-        [
-            InlineKeyboardButton(
-                text=f"⚙️ {t('advanced_label', lang)}: {t('btn_arm_adjustable', lang)}",
-                callback_data="wizard:arm_adjustable",
-            )
-        ],
-    ]
-    if show_back:
-        rows.append([_back_button(lang)])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
 STATION_TYPE_DEFAULT_NAMES = {
     StationTypeEnum.FRONT_SEATS: "Front Seats",
     StationTypeEnum.REAR_SEATS: "Rear Seats",
@@ -216,7 +198,10 @@ def envelope_keyboard(lang: str, *, has_rows: bool = False, show_back: bool = Tr
     rows = [[InlineKeyboardButton(text=t("btn_done", lang), callback_data="wizard:envelope_done")]]
     if has_rows:
         rows.append(
-            [InlineKeyboardButton(text=t("btn_remove_row", lang), callback_data="wizard:remove_row_prompt")]
+            [
+                InlineKeyboardButton(text=t("btn_edit_row", lang), callback_data="wizard:edit_row_prompt"),
+                InlineKeyboardButton(text=t("btn_remove_row", lang), callback_data="wizard:remove_row_prompt"),
+            ]
         )
     if not has_rows:
         rows.append(

@@ -35,10 +35,6 @@ class StationDraft:
     name: str
     station_type: StationType
     default_arm_in: Decimal
-    is_adjustable_arm: bool = False
-    minimum_arm_in: Decimal | None = None
-    maximum_arm_in: Decimal | None = None
-    maximum_weight_lb: Decimal | None = None
     maximum_volume_gal: Decimal | None = None
     fuel_density_lb_per_gal: Decimal | None = None
 
@@ -60,7 +56,6 @@ class AircraftRevisionDraft:
     envelope_rows: list[EnvelopeRowDraft]
     max_ramp_weight_lb: Decimal | None = None
     max_landing_weight_lb: Decimal | None = None
-    max_zero_fuel_weight_lb: Decimal | None = None
     known_useful_load_lb: Decimal | None = None
     source_document_name: str | None = None
     source_document_date: datetime.date | None = None
@@ -142,10 +137,6 @@ def validate_revision_draft(draft: "AircraftRevisionDraft") -> None:
             name=station.name.strip(),
             station_type=station.station_type,
             default_arm_in=station.default_arm_in,
-            is_adjustable_arm=station.is_adjustable_arm,
-            minimum_arm_in=station.minimum_arm_in,
-            maximum_arm_in=station.maximum_arm_in,
-            maximum_weight_lb=station.maximum_weight_lb,
             maximum_volume_gal=station.maximum_volume_gal,
             fuel_density_lb_per_gal=station.fuel_density_lb_per_gal,
         )
@@ -180,7 +171,6 @@ def validate_revision_draft(draft: "AircraftRevisionDraft") -> None:
         envelope=envelope,
         max_ramp_weight_lb=draft.max_ramp_weight_lb,
         max_landing_weight_lb=draft.max_landing_weight_lb,
-        max_zero_fuel_weight_lb=draft.max_zero_fuel_weight_lb,
     )
 
 
@@ -251,10 +241,6 @@ class AircraftService:
                 "name": s.name,
                 "station_type": StationTypeEnum(s.station_type.value),
                 "default_arm_in": s.default_arm_in,
-                "is_adjustable_arm": s.is_adjustable_arm,
-                "minimum_arm_in": s.minimum_arm_in,
-                "maximum_arm_in": s.maximum_arm_in,
-                "maximum_weight_lb": s.maximum_weight_lb,
                 "maximum_volume_gal": s.maximum_volume_gal,
                 "fuel_density_lb_per_gal": s.fuel_density_lb_per_gal,
                 "active": True,
@@ -277,7 +263,6 @@ class AircraftService:
             max_ramp_weight_lb=draft.max_ramp_weight_lb,
             max_takeoff_weight_lb=draft.max_takeoff_weight_lb,
             max_landing_weight_lb=draft.max_landing_weight_lb,
-            max_zero_fuel_weight_lb=draft.max_zero_fuel_weight_lb,
             known_useful_load_lb=draft.known_useful_load_lb,
             source_document_name=draft.source_document_name,
             source_document_date=draft.source_document_date,
@@ -321,10 +306,6 @@ def build_domain_profile(revision: AircraftRevision, aircraft: Aircraft) -> Airc
             name=s.name,
             station_type=StationType(s.station_type.value),
             default_arm_in=s.default_arm_in,
-            is_adjustable_arm=s.is_adjustable_arm,
-            minimum_arm_in=s.minimum_arm_in,
-            maximum_arm_in=s.maximum_arm_in,
-            maximum_weight_lb=s.maximum_weight_lb,
             maximum_volume_gal=s.maximum_volume_gal,
             fuel_density_lb_per_gal=s.fuel_density_lb_per_gal,
         )
@@ -358,5 +339,4 @@ def build_domain_profile(revision: AircraftRevision, aircraft: Aircraft) -> Airc
         envelope=envelope,
         max_ramp_weight_lb=revision.max_ramp_weight_lb,
         max_landing_weight_lb=revision.max_landing_weight_lb,
-        max_zero_fuel_weight_lb=revision.max_zero_fuel_weight_lb,
     )

@@ -63,21 +63,6 @@ def test_overweight_condition():
     assert result.overall_status == LimitStatus.OUT_OF_LIMITS
 
 
-def test_station_maximum_weight_violation():
-    profile = make_test_profile()
-    calc_input = basic_input(
-        loads=[
-            LoadItemInput(station_id="front_seats", weight_lb=D("340")),
-            LoadItemInput(station_id="rear_seats", weight_lb=D("0")),
-            LoadItemInput(station_id="baggage_1", weight_lb=D("150")),  # max is 120
-        ]
-    )
-    result = calculate(profile, calc_input)
-    assert result.overall_status == LimitStatus.OUT_OF_LIMITS
-    baggage_result = next(s for s in result.ramp.station_results if s.station_id == "baggage_1")
-    assert baggage_result.over_station_limit
-
-
 def test_fuel_tank_capacity_violation_rejected():
     profile = make_test_profile()
     calc_input = basic_input(
@@ -213,49 +198,3 @@ def test_no_envelope_within_weight_limits_reports_within():
 
     assert result.ramp.cg_check is None
     assert result.overall_status == LimitStatus.WITHIN
-
-
-def test_adjustable_arm_out_of_range_rejected():
-    from app.domain.models import StationProfile, StationType
-
-    profile = make_test_profile(
-        stations=[
-            StationProfile(
-                station_id="custom1",
-                name="Custom Station",
-                station_type=StationType.CUSTOM,
-                default_arm_in=D("100"),
-                is_adjustable_arm=True,
-                minimum_arm_in=D("90"),
-                maximum_arm_in=D("110"),
-            )
-        ]
-    )
-    calc_input = CalculationInput(
-        loads=[LoadItemInput(station_id="custom1", weight_lb=D("10"), arm_in=D("200"))],
-        fuel=[],
-    )
-    with pytest.raises(InvalidInputError):
-        calculate(profile, calc_input)
-
-
-def test_zero_fuel_limit_is_reported_explicitly_in_advanced_result():
-    profile = make_test_profile(max_zero_fuel_weight_lb=D("2000"))
-    calc_input = basic_input(
-        loads=[
-            LoadItemInput(station_id="front_seats", weight_lb=D("300")),
-            LoadItemInput(station_id="rear_seats", weight_lb=D("250")),
-            LoadItemInput(station_id="baggage_1", weight_lb=D("0")),
-        ],
-        fuel=[
-            FuelStationInput(station_id="main_fuel", starting_gal=D("0")),
-            FuelStationInput(station_id="aux_fuel", starting_gal=D("0")),
-        ],
-    )
-
-    result = calculate(profile, calc_input)
-
-    assert result.zero_fuel_weight_lb == D("2050")
-    assert result.zero_fuel_limit_lb == D("2000")
-    assert result.zero_fuel_status == LimitStatus.OUT_OF_LIMITS
-    assert result.overall_status == LimitStatus.OUT_OF_LIMITS

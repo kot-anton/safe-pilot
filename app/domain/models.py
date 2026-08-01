@@ -57,10 +57,6 @@ class StationProfile:
     name: str
     station_type: StationType
     default_arm_in: Decimal
-    is_adjustable_arm: bool = False
-    minimum_arm_in: Decimal | None = None
-    maximum_arm_in: Decimal | None = None
-    maximum_weight_lb: Decimal | None = None
     maximum_volume_gal: Decimal | None = None
     fuel_density_lb_per_gal: Decimal | None = None
 
@@ -71,30 +67,14 @@ class StationProfile:
             raise InvalidStationError("Station name is required")
 
         _require_finite(self.default_arm_in, f"ARM for station '{self.name}'")
-        _require_finite(self.minimum_arm_in, f"Minimum ARM for station '{self.name}'")
-        _require_finite(self.maximum_arm_in, f"Maximum ARM for station '{self.name}'")
-        _require_finite(self.maximum_weight_lb, f"Maximum weight for station '{self.name}'")
         _require_finite(self.maximum_volume_gal, f"Maximum volume for station '{self.name}'")
         _require_finite(self.fuel_density_lb_per_gal, f"Fuel density for station '{self.name}'")
-
-        if self.maximum_weight_lb is not None and self.maximum_weight_lb <= 0:
-            raise InvalidStationError(f"Station '{self.name}' maximum weight must be positive")
 
         if self.station_type in FUEL_STATION_TYPES:
             if self.maximum_volume_gal is None or self.maximum_volume_gal <= 0:
                 raise InvalidStationError(f"Fuel station '{self.name}' requires a positive maximum volume")
             if self.fuel_density_lb_per_gal is None or self.fuel_density_lb_per_gal <= 0:
                 raise InvalidStationError(f"Fuel station '{self.name}' requires an explicit positive fuel density")
-
-        if self.is_adjustable_arm:
-            if self.minimum_arm_in is None or self.maximum_arm_in is None:
-                raise InvalidStationError(f"Adjustable station '{self.name}' requires min/max ARM")
-            if self.minimum_arm_in > self.maximum_arm_in:
-                raise InvalidStationError(f"Station '{self.name}' minimum ARM exceeds maximum ARM")
-            if not self.minimum_arm_in <= self.default_arm_in <= self.maximum_arm_in:
-                raise InvalidStationError(
-                    f"Default ARM for station '{self.name}' must be inside its adjustable range"
-                )
 
 
 @dataclass(frozen=True)
@@ -110,7 +90,6 @@ class AircraftProfile:
     envelope: CGEnvelope | None
     max_ramp_weight_lb: Decimal | None = None
     max_landing_weight_lb: Decimal | None = None
-    max_zero_fuel_weight_lb: Decimal | None = None
 
     def __post_init__(self) -> None:
         if not self.tail_number.strip():
@@ -124,7 +103,6 @@ class AircraftProfile:
             "Maximum Takeoff Weight": self.max_takeoff_weight_lb,
             "Maximum Ramp Weight": self.max_ramp_weight_lb,
             "Maximum Landing Weight": self.max_landing_weight_lb,
-            "Maximum Zero Fuel Weight": self.max_zero_fuel_weight_lb,
         }
         for label, value in numeric_values.items():
             if value is not None and not value.is_finite():
@@ -139,7 +117,6 @@ class AircraftProfile:
         for label, value in (
             ("Maximum Ramp Weight", self.max_ramp_weight_lb),
             ("Maximum Landing Weight", self.max_landing_weight_lb),
-            ("Maximum Zero Fuel Weight", self.max_zero_fuel_weight_lb),
         ):
             if value is not None and value <= 0:
                 raise InvalidStationError(f"{label} must be positive")
@@ -190,7 +167,6 @@ class LoadItemInput:
 
     station_id: str
     weight_lb: Decimal
-    arm_in: Decimal | None = None  # required only for adjustable-arm stations
 
 
 @dataclass(frozen=True)
@@ -232,7 +208,6 @@ class StationLoadResult:
     weight_lb: Decimal
     arm_in: Decimal
     moment_lb_in: Decimal
-    over_station_limit: bool
     over_capacity: bool = False
 
 
@@ -260,7 +235,4 @@ class CalculationResult:
     takeoff: PhaseResult
     landing: PhaseResult | None
     landing_evaluated: bool
-    zero_fuel_weight_lb: Decimal
-    zero_fuel_limit_lb: Decimal | None
-    zero_fuel_status: LimitStatus
     overall_status: LimitStatus
