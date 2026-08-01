@@ -10,6 +10,7 @@ re-renders whichever checkpoint comes off the stack.
 """
 from __future__ import annotations
 
+import html
 import json
 from decimal import Decimal
 
@@ -753,6 +754,10 @@ def _result_keyboard(lang: str) -> InlineKeyboardMarkup:
     )
 
 
+def _bold(text: str) -> str:
+    return f"<b>{text}</b>"
+
+
 def _phase_text(phase: PhaseResult, lang: str) -> str:
     phase_name = t(f"phase_{phase.phase.lower()}", lang)
     phase_status_key = {
@@ -760,7 +765,10 @@ def _phase_text(phase: PhaseResult, lang: str) -> str:
         LimitStatus.ON_LIMIT: "phase_status_on_limit",
         LimitStatus.OUT_OF_LIMITS: "phase_status_out_of_limits",
     }[phase.overall_status]
-    lines = [f"{phase_name} — {t(phase_status_key, lang)}"]
+    phase_line = f"{phase_name} — {t(phase_status_key, lang)}"
+    if phase.overall_status != LimitStatus.WITHIN:
+        phase_line = _bold(phase_line)
+    lines = [phase_line]
     lines.append(t("result_weight", lang, value=fmt(phase.total_weight_lb, " lb")))
     if phase.weight_limit_lb is not None:
         limit_key = {
@@ -773,7 +781,7 @@ def _phase_text(phase: PhaseResult, lang: str) -> str:
         if margin > 0:
             lines.append(t("result_weight_below", lang, value=fmt(margin, " lb")))
         elif margin < 0:
-            lines.append(t("result_weight_over", lang, value=fmt(abs(margin), " lb")))
+            lines.append(_bold(t("result_weight_over", lang, value=fmt(abs(margin), " lb"))))
         else:
             lines.append(t("result_weight_on_limit", lang))
     else:
@@ -794,18 +802,22 @@ def _phase_text(phase: PhaseResult, lang: str) -> str:
         )
         if cg.forward_margin_in < 0:
             lines.append(
-                t(
-                    "result_cg_forward_exceeded",
-                    lang,
-                    value=fmt(abs(cg.forward_margin_in), " in"),
+                _bold(
+                    t(
+                        "result_cg_forward_exceeded",
+                        lang,
+                        value=fmt(abs(cg.forward_margin_in), " in"),
+                    )
                 )
             )
         elif cg.aft_margin_in < 0:
             lines.append(
-                t(
-                    "result_cg_aft_exceeded",
-                    lang,
-                    value=fmt(abs(cg.aft_margin_in), " in"),
+                _bold(
+                    t(
+                        "result_cg_aft_exceeded",
+                        lang,
+                        value=fmt(abs(cg.aft_margin_in), " in"),
+                    )
                 )
             )
         elif cg.status == LimitStatus.ON_LIMIT:
@@ -816,7 +828,9 @@ def _phase_text(phase: PhaseResult, lang: str) -> str:
         lines.append(t("result_cg_not_evaluated", lang))
     for s in phase.station_results:
         if s.over_capacity:
-            lines.append(t("result_tank_capacity_exceeded", lang, station=s.name))
+            lines.append(
+                _bold(t("result_tank_capacity_exceeded", lang, station=html.escape(s.name)))
+            )
     return "\n".join(lines)
 
 
@@ -860,7 +874,7 @@ def _phase_failure_reasons(phase: PhaseResult, lang: str) -> list[str]:
                     "overall_reason_tank",
                     lang,
                     phase=phase_name,
-                    station=station.name,
+                    station=html.escape(station.name),
                 )
             )
     return reasons
@@ -872,11 +886,11 @@ def _status_header(
     header = t(_STATUS_KEY[result.overall_status], lang)
     if not cg_evaluated:
         if result.overall_status == LimitStatus.WITHIN:
-            return "⚠️ CG LIMITS NOT EVALUATED — ENTERED WEIGHT LIMITS WITHIN"
+            return _bold("⚠️ CG LIMITS NOT EVALUATED — ENTERED WEIGHT LIMITS WITHIN")
         if result.overall_status == LimitStatus.ON_LIMIT:
-            return "⚠️ CG LIMITS NOT EVALUATED — ENTERED WEIGHT LIMIT ON BOUNDARY"
+            return _bold("⚠️ CG LIMITS NOT EVALUATED — ENTERED WEIGHT LIMIT ON BOUNDARY")
         header += " — CG LIMITS NOT EVALUATED"
-    return header
+    return _bold(header)
 
 
 def _overall_result_text(result: CalculationResult, lang: str) -> str:
@@ -900,7 +914,7 @@ def _overall_result_text(result: CalculationResult, lang: str) -> str:
     # compact while preserving the first, phase-specific occurrence.
     reasons = list(dict.fromkeys(reasons))
     lines.append(t("overall_out_of_limits", lang))
-    lines.extend(f"• {reason}" for reason in reasons)
+    lines.extend(f"• {_bold(reason)}" for reason in reasons)
     lines.append(t("overall_adjust_and_recalculate", lang))
     return "\n".join(lines)
 
@@ -983,7 +997,7 @@ async def _finalize_flight_calculation(
         _status_header(result, lang, cg_evaluated=profile.envelope is not None),
         "",
     ]
-    lines.append(profile.tail_number)
+    lines.append(html.escape(profile.tail_number))
     lines.append("")
     if profile.envelope is None:
         lines.append("⚠️ No CG envelope on file -- weight checked, CG NOT evaluated.")
@@ -1006,9 +1020,11 @@ async def _finalize_flight_calculation(
 
     if result.overall_status != LimitStatus.OUT_OF_LIMITS:
         # ON LIMIT is a valid boundary result, not a request to change the loading.
-        await message.answer("\n".join(lines), reply_markup=_result_keyboard(lang))
+        await message.answer(
+            "\n".join(lines), parse_mode="HTML", reply_markup=_result_keyboard(lang)
+        )
     else:
-        await message.answer("\n".join(lines))
+        await message.answer("\n".join(lines), parse_mode="HTML")
         recs = flight_service.recommend(profile, calc_input)
         await message.answer(recommendation_text(recs, lang), reply_markup=_result_keyboard(lang))
 

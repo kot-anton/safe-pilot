@@ -1,9 +1,10 @@
 """Deterministic recommendation solver for the Advanced per-station calculation.
 
 Every candidate is applied to a copy of the input and run through the complete calculator before
-it is returned. Passenger reseating is deliberately never suggested: this solver only changes
-movable cargo/baggage and fuel quantities. Added load is considered only at a baggage station
-with an explicit published maximum stored in the aircraft profile.
+it is returned. Passenger reseating is deliberately never suggested: Front Seats is always
+occupied by required crew (pilot, and an instructor in a side-by-side trainer), so this solver
+only moves existing baggage between baggage stations, adds baggage (bounded by max takeoff
+weight, since there's no per-station published limit anymore), and adjusts fuel.
 """
 from __future__ import annotations
 
@@ -35,6 +36,7 @@ class RecommendationKind(str, Enum):
     REDUCE_FUEL = "REDUCE_FUEL"
     ADD_FUEL = "ADD_FUEL"
     REDUCE_BAGGAGE = "REDUCE_BAGGAGE"
+    ADD_BAGGAGE = "ADD_BAGGAGE"
     MOVE_LOAD = "MOVE_LOAD"
     SHIFT_FUEL = "SHIFT_FUEL"
 
@@ -84,6 +86,12 @@ class Recommendation:
             kg = lb_to_kg(self.delta_lb)
             return (
                 f"Remove {display(self.delta_lb)} lb ({display(kg)} kg) from "
+                f"{self.station_name}."
+            )
+        if self.kind == RecommendationKind.ADD_BAGGAGE:
+            kg = lb_to_kg(self.delta_lb)
+            return (
+                f"Add {display(self.delta_lb)} lb ({display(kg)} kg) to "
                 f"{self.station_name}."
             )
         if self.kind == RecommendationKind.MOVE_LOAD:
@@ -151,55 +159,54 @@ def _current_load_weight(calc_input: CalculationInput, station_id: str) -> Decim
     return Decimal("0")
 
 
+# Moves are only ever searched within one of these groups -- never between them, and never
+# touching FRONT_SEATS (always occupied by required crew: pilot, and an instructor in a
+# side-by-side trainer -- reseating them isn't a real option) or an ambiguous CUSTOM station.
+_MOVABLE_GROUPS = (
+    {StationType.BAGGAGE},
+)
+
+
 def _search_move_load(
     profile: AircraftProfile, calc_input: CalculationInput
 ) -> list[Recommendation]:
-    """Move existing baggage only; never move occupants or an ambiguous CUSTOM load.
-
-    A CUSTOM station may represent equipment, a fixed installation, or another non-movable
-    item. Without an explicit "movable cargo" flag, recommending a transfer from it would be an
-    unsafe guess. Baggage stations are the only stations whose meaning is unambiguous enough for
-    this automatic suggestion.
-    """
-    movable = [
-        station
-        for station in profile.stations
-        if station.station_type == StationType.BAGGAGE
-    ]
+    """Suggest shifting weight within baggage stations. Never suggests reseating occupants."""
     results: list[Recommendation] = []
-    for source in movable:
-        source_weight = _current_load_weight(calc_input, source.station_id)
-        if source_weight <= 0:
-            continue
-        for destination in movable:
-            if destination.station_id == source.station_id:
+    for group in _MOVABLE_GROUPS:
+        movable = [station for station in profile.stations if station.station_type in group]
+        for source in movable:
+            source_weight = _current_load_weight(calc_input, source.station_id)
+            if source_weight <= 0:
                 continue
-            destination_weight = _current_load_weight(calc_input, destination.station_id)
-            headroom = source_weight
-            if headroom <= 0:
-                continue
-            steps = min(int(headroom / LOAD_STEP_LB), MAX_STEPS)
-            for step in range(1, steps + 1):
-                delta = LOAD_STEP_LB * step
-                candidate = _replace_load(
-                    calc_input, source.station_id, source_weight - delta
-                )
-                candidate = _replace_load(
-                    candidate, destination.station_id, destination_weight + delta
-                )
-                result = _try_calculate(profile, candidate)
-                if result and _is_acceptable(result.overall_status):
-                    results.append(
-                        Recommendation(
-                            kind=RecommendationKind.MOVE_LOAD,
-                            station_id=source.station_id,
-                            station_name=source.name,
-                            target_station_id=destination.station_id,
-                            target_station_name=destination.name,
-                            delta_lb=delta,
-                        )
+            for destination in movable:
+                if destination.station_id == source.station_id:
+                    continue
+                destination_weight = _current_load_weight(calc_input, destination.station_id)
+                headroom = source_weight
+                if headroom <= 0:
+                    continue
+                steps = min(int(headroom / LOAD_STEP_LB), MAX_STEPS)
+                for step in range(1, steps + 1):
+                    delta = LOAD_STEP_LB * step
+                    candidate = _replace_load(
+                        calc_input, source.station_id, source_weight - delta
                     )
-                    break
+                    candidate = _replace_load(
+                        candidate, destination.station_id, destination_weight + delta
+                    )
+                    result = _try_calculate(profile, candidate)
+                    if result and _is_acceptable(result.overall_status):
+                        results.append(
+                            Recommendation(
+                                kind=RecommendationKind.MOVE_LOAD,
+                                station_id=source.station_id,
+                                station_name=source.name,
+                                target_station_id=destination.station_id,
+                                target_station_name=destination.name,
+                                delta_lb=delta,
+                            )
+                        )
+                        break
     return results
 
 
@@ -223,6 +230,42 @@ def _search_reduce_baggage(
                         station_id=station.station_id,
                         station_name=station.name,
                         delta_lb=delta,
+                    )
+                )
+                break
+    return results
+
+
+def _search_add_baggage(
+    profile: AircraftProfile, calc_input: CalculationInput
+) -> list[Recommendation]:
+    """Suggest adding baggage aft, which can correct a forward CG (or a large weight margin).
+
+    There's no per-station published limit to bound against anymore, so headroom is bounded by
+    the aircraft's maximum takeoff weight instead, computed from the current loading.
+    """
+    baseline = _try_calculate(profile, calc_input)
+    if baseline is None:
+        return []
+    headroom = profile.max_takeoff_weight_lb - baseline.takeoff.total_weight_lb
+    if headroom <= 0:
+        return []
+    results: list[Recommendation] = []
+    steps = min(int(headroom / LOAD_STEP_LB), MAX_STEPS)
+    for station in profile.baggage_stations:
+        current = _current_load_weight(calc_input, station.station_id)
+        for step in range(1, steps + 1):
+            delta = LOAD_STEP_LB * step
+            candidate = _replace_load(calc_input, station.station_id, current + delta)
+            result = _try_calculate(profile, candidate)
+            if result and _is_acceptable(result.overall_status):
+                results.append(
+                    Recommendation(
+                        kind=RecommendationKind.ADD_BAGGAGE,
+                        station_id=station.station_id,
+                        station_name=station.name,
+                        delta_lb=delta,
+                        note=ADDED_LOAD_NOTE,
                     )
                 )
                 break
@@ -354,7 +397,8 @@ _CATEGORY_PRIORITY = {
     RecommendationKind.REDUCE_BAGGAGE: 1,
     RecommendationKind.REDUCE_FUEL: 2,
     RecommendationKind.SHIFT_FUEL: 3,
-    RecommendationKind.ADD_FUEL: 4,
+    RecommendationKind.ADD_BAGGAGE: 4,
+    RecommendationKind.ADD_FUEL: 5,
 }
 
 
@@ -378,6 +422,7 @@ def generate_recommendations(
     candidates: list[Recommendation] = []
     candidates += _search_move_load(profile, calc_input)
     candidates += _search_reduce_baggage(profile, calc_input)
+    candidates += _search_add_baggage(profile, calc_input)
     candidates += _search_reduce_fuel(profile, calc_input, min_fuel_gal)
     if allow_fuel_transfer:
         candidates += _search_shift_fuel(profile, calc_input, min_fuel_gal)
