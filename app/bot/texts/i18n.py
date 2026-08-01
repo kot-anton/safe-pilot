@@ -35,7 +35,6 @@ STRINGS: dict[str, str] = {
     'btn_main_menu': 'Main menu',
     'btn_change_load': 'Change load',
     'btn_advanced_landing': 'Advanced/Landing',
-    'btn_exact_tank_split': 'Enter exact tank quantities',
     'btn_edit_station': '✏️ Edit a station',
     'btn_remove_station': '🗑 Remove a station',
     'btn_rename': '✏️ Rename',

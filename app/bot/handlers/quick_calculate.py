@@ -119,8 +119,7 @@ def _step_keyboard(
 def _fuel_keyboard(
     lang: str, *, full_gal: Decimal, show_back: bool = False
 ) -> InlineKeyboardMarkup:
-    # No "no fuel" shortcut: the aircraft could not have taken off with zero usable fuel on
-    # board, so offering that as a one-tap option would just invite a nonsensical answer.
+    # No "no fuel" shortcut: can't take off with zero fuel on board.
     rows = [
         [
             InlineKeyboardButton(
@@ -129,13 +128,6 @@ def _fuel_keyboard(
             )
         ],
     ]
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text=t("btn_exact_tank_split", lang), callback_data="quick:advanced"
-            )
-        ]
-    )
     footer = []
     if show_back:
         footer.append(
@@ -360,7 +352,7 @@ async def _begin(
         ],
         _nav_history=[],
     )
-    await message.answer(profile.tail_number, reply_markup=ReplyKeyboardRemove())
+    await message.answer(f"Quick Calculate for {profile.nickname} ({profile.tail_number})", reply_markup=ReplyKeyboardRemove())
 
     if front_station is not None:
         await goto(message, state, user, QuickCalcWizard.front, _ask_front, record_history=False)
