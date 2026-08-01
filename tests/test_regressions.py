@@ -83,7 +83,7 @@ async def test_empty_cg_and_moment_are_derived_from_the_entered_aircraft_record(
     user = SimpleNamespace(language="en")
 
     cg_state = _FakeState(
-        {"basic_empty_weight_lb": "1960.8", "setup_mode": "quick"}
+        {"basic_empty_weight_lb": "1960.8"}
     )
     await aircraft_wizard.got_empty_cg(
         _FakeMessage("79.1300"), cg_state, user
@@ -91,7 +91,7 @@ async def test_empty_cg_and_moment_are_derived_from_the_entered_aircraft_record(
     assert D(cg_state.data["basic_empty_moment_lb_in"]) == D("155158.104")
 
     moment_state = _FakeState(
-        {"basic_empty_weight_lb": "1960.8", "setup_mode": "quick"}
+        {"basic_empty_weight_lb": "1960.8"}
     )
     await aircraft_wizard.got_empty_moment(
         _FakeMessage("155158.104"), moment_state, user
@@ -99,7 +99,23 @@ async def test_empty_cg_and_moment_are_derived_from_the_entered_aircraft_record(
     assert D(moment_state.data["basic_empty_cg_in"]) == D("79.13")
 
 
-async def test_total_usable_fuel_is_explicitly_confirmed_against_tank_sum():
+async def test_empty_cg_accepts_negative_value_like_the_moment_path_does():
+    """Regression: got_empty_cg used to disallow negative values while got_empty_moment (which
+    can derive an equally negative CG) did not, so a negative CG -- physically valid depending
+    on datum placement, same as a station ARM -- was only reachable indirectly via moment."""
+    user = SimpleNamespace(language="en")
+    cg_state = _FakeState({"basic_empty_weight_lb": "1000"})
+
+    await aircraft_wizard.got_empty_cg(_FakeMessage("-5.0"), cg_state, user)
+
+    assert D(cg_state.data["basic_empty_cg_in"]) == D("-5.0")
+    assert D(cg_state.data["basic_empty_moment_lb_in"]) == D("-5000.0")
+
+
+async def test_finishing_stations_shows_readonly_fuel_total_and_goes_to_envelope():
+    """Regression: the wizard used to re-ask the pilot to type back the fuel total they'd
+    already configured tank-by-tank. It's now a read-only recap folded into the CG-envelope
+    step's intro, with no separate question in between."""
     user = SimpleNamespace(language="en")
     route_state = _FakeState(
         {
@@ -108,28 +124,6 @@ async def test_total_usable_fuel_is_explicitly_confirmed_against_tank_sum():
                     "name": "Main Fuel Tanks",
                     "station_type": "FUEL",
                     "maximum_volume_gal": "40",
-                }
-            ],
-            "_nav_history": [],
-        },
-        AircraftWizard.station_add_prompt,
-    )
-    route_callback = _FakeCallback(_FakeMessage())
-
-    await aircraft_wizard.stations_done(route_callback, route_state, user)
-
-    assert route_state.current_state == AircraftWizard.total_usable_fuel
-    assert route_callback.message.answers[-1][0] == "Total usable fuel, US gal:"
-
-    state = _FakeState(
-        {
-            "update_mode": True,
-            "total_usable_fuel_gal": "53.0000",
-            "stations": [
-                {
-                    "name": "Main Fuel Tanks",
-                    "station_type": "FUEL",
-                    "maximum_volume_gal": "40.0000",
                 },
                 {
                     "name": "Aux Fuel Tanks",
@@ -140,29 +134,49 @@ async def test_total_usable_fuel_is_explicitly_confirmed_against_tank_sum():
             "envelope_rows": [],
             "_nav_history": [],
         },
-        AircraftWizard.total_usable_fuel,
+        AircraftWizard.station_add_prompt,
     )
-    prompt_message = _FakeMessage()
+    route_callback = _FakeCallback(_FakeMessage())
 
-    await aircraft_wizard.render_total_usable_fuel(prompt_message, state, user)
+    await aircraft_wizard.stations_done(route_callback, route_state, user)
 
-    prompt, kwargs = prompt_message.answers[-1]
-    assert prompt == "Total usable fuel, US gal:\n\nCurrent: 53 gal"
-    assert kwargs["reply_markup"].inline_keyboard[0][0].text == "✅ Keep Current"
+    assert route_state.current_state == AircraftWizard.envelope_rows
+    prompt = route_callback.message.answers[-1][0]
+    assert "Tanks total: 53 gal" in prompt
+    assert "Enter one CG-envelope row per message" in prompt
 
-    mismatch_message = _FakeMessage()
-    await aircraft_wizard._accept_total_usable_fuel(
-        mismatch_message, state, user, D("52")
+
+async def test_takeoff_weight_rejected_immediately_when_below_ramp_weight():
+    """Regression: ramp weight is asked before takeoff weight, but the ramp>=takeoff domain
+    rule used to only be checked at the very end, at Review -- after every remaining
+    Advanced-Setup question had already been answered. It must now be caught the moment
+    takeoff weight is entered, while the pilot is still on that screen."""
+    user = SimpleNamespace(language="en")
+    state = _FakeState(
+        {"max_ramp_weight_lb": "2200", "_nav_history": [AircraftWizard.max_ramp_weight]},
+        AircraftWizard.max_takeoff_weight,
     )
-    assert state.current_state == AircraftWizard.total_usable_fuel
-    assert "Entered: 52 gal. Tank sum: 53 gal." in mismatch_message.answers[-1][0]
+    message = _FakeMessage("2300")
 
-    accepted_message = _FakeMessage()
-    await aircraft_wizard._accept_total_usable_fuel(
-        accepted_message, state, user, D("53.0000")
+    await aircraft_wizard.got_max_takeoff_weight(message, state, user)
+
+    assert state.current_state == AircraftWizard.max_takeoff_weight
+    assert any("cannot be below max takeoff weight" in text for text, _ in message.answers)
+    assert any("Max takeoff weight, lb:" in text for text, _ in message.answers)
+
+
+async def test_takeoff_weight_accepted_when_at_or_above_ramp_weight():
+    user = SimpleNamespace(language="en")
+    state = _FakeState(
+        {"max_ramp_weight_lb": "2200", "_nav_history": [AircraftWizard.max_ramp_weight]},
+        AircraftWizard.max_takeoff_weight,
     )
-    assert state.data["total_usable_fuel_gal"] == "53"
-    assert state.current_state == AircraftWizard.envelope_rows
+    message = _FakeMessage("2200")
+
+    await aircraft_wizard.got_max_takeoff_weight(message, state, user)
+
+    assert state.current_state == AircraftWizard.max_landing_weight
+    assert not any("cannot be below max takeoff weight" in text for text, _ in message.answers)
 
 
 async def test_advanced_pilot_surfaces_never_expose_database_decimal_scale():
@@ -329,8 +343,54 @@ def test_legacy_custom_station_can_be_converted_to_fuel_without_stale_pound_fiel
     assert station["station_type"] == "FUEL"
     assert station["maximum_weight_lb"] is None
     assert station["maximum_volume_gal"] is None
-    assert station["fuel_density_lb_per_gal"] is None
+    # Fuel density is no longer a wizard question -- converting to FUEL attaches the
+    # configured default automatically instead of leaving it unset.
+    assert station["fuel_density_lb_per_gal"] == "6.0"
     assert station["is_adjustable_arm"] is False
+
+
+def test_station_type_change_away_from_fuel_rejected_when_name_still_looks_like_fuel():
+    """Changing a station's type away from Fuel Tank must not silently leave a fuel-sounding
+    name attached to a non-fuel station -- that's the exact CUSTOM+"Fuel Aux Tanks" failure
+    mode this guard exists for, just triggered from the other direction."""
+    station = {
+        "name": "Aux Fuel Tanks",
+        "station_type": "FUEL",
+        "default_arm_in": "94",
+        "is_adjustable_arm": False,
+        "minimum_arm_in": None,
+        "maximum_arm_in": None,
+        "maximum_weight_lb": None,
+        "maximum_volume_gal": "20",
+        "fuel_density_lb_per_gal": "6.0",
+    }
+
+    changed = _apply_station_type_change(station, "CUSTOM")
+
+    assert changed is False
+    assert station["station_type"] == "FUEL"
+    assert station["maximum_volume_gal"] == "20"
+
+
+def test_station_type_change_away_from_fuel_allowed_for_non_fuel_name():
+    station = {
+        "name": "Wing Locker",
+        "station_type": "FUEL",
+        "default_arm_in": "94",
+        "is_adjustable_arm": False,
+        "minimum_arm_in": None,
+        "maximum_arm_in": None,
+        "maximum_weight_lb": None,
+        "maximum_volume_gal": "20",
+        "fuel_density_lb_per_gal": "6.0",
+    }
+
+    changed = _apply_station_type_change(station, "CUSTOM")
+
+    assert changed is True
+    assert station["station_type"] == "CUSTOM"
+    assert station["maximum_volume_gal"] is None
+    assert station["fuel_density_lb_per_gal"] is None
 
 
 def test_adjustable_load_requires_and_parses_actual_arm():
@@ -497,6 +557,36 @@ async def test_advanced_flow_rejects_burn_above_starting_fuel_immediately():
     assert any("cannot exceed starting fuel (20 gal)" in text for text, _ in message.answers)
 
 
+async def test_fuel_enroute_prompt_warns_about_landing_only_with_multiple_tanks():
+    """Skipping enroute burn on one tank cancels landing evaluation for every tank (the domain
+    rule requires all tanks to have a burn answer), not just the skipped one. The prompt should
+    say so, but only when there's more than one tank -- the common single-tank case does not
+    need the extra sentence."""
+    user = SimpleNamespace(language="en")
+
+    single_tank_state = _FakeState(
+        {
+            "fuel_station_ids": ["fuel"],
+            "fuel_station_names": {"fuel": "Fuel Tank"},
+            "fuel": {"fuel": {"starting_gal": "20"}},
+        }
+    )
+    single_message = _FakeMessage()
+    await flight_calculation._render_fuel_prompt(single_message, single_tank_state, user, 0, "enroute")
+    assert "landing will not be evaluated" not in single_message.answers[-1][0]
+
+    multi_tank_state = _FakeState(
+        {
+            "fuel_station_ids": ["main", "aux"],
+            "fuel_station_names": {"main": "Main", "aux": "Aux"},
+            "fuel": {"main": {"starting_gal": "20"}, "aux": {"starting_gal": "10"}},
+        }
+    )
+    multi_message = _FakeMessage()
+    await flight_calculation._render_fuel_prompt(multi_message, multi_tank_state, user, 0, "enroute")
+    assert "landing will not be evaluated for any tank, not just this one" in multi_message.answers[-1][0]
+
+
 async def test_last_advanced_input_skips_quick_and_malformed_history():
     history = [
         SimpleNamespace(
@@ -661,8 +751,7 @@ async def test_update_skips_unset_maximum_zero_fuel_weight_question():
 
     await aircraft_wizard._advance_past_max_landing(message, state, user)
 
-    assert state.current_state == AircraftWizard.known_useful_load
-    assert any("Known useful load, lb (optional):" in text for text, _ in message.answers)
+    assert state.current_state == AircraftWizard.station_add_prompt
     assert all("Zero Fuel Weight" not in text for text, _ in message.answers)
 
 

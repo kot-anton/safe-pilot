@@ -116,6 +116,9 @@ def _step_keyboard(
             ]
         )
     rows.append(
+        [InlineKeyboardButton(text=t("btn_zero_load", lang), callback_data="quick:zero")]
+    )
+    rows.append(
         [InlineKeyboardButton(text=t("btn_cancel", lang), callback_data="quick:cancel")]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -130,6 +133,9 @@ def _fuel_keyboard(lang: str, *, full_gal: Decimal) -> InlineKeyboardMarkup:
             )
         ],
     ]
+    rows.append(
+        [InlineKeyboardButton(text=t("btn_zero_fuel", lang), callback_data="quick:zero")]
+    )
     rows.append(
         [
             InlineKeyboardButton(

@@ -1,10 +1,13 @@
 from decimal import Decimal as D
 
+from app.config import settings
+from app.domain.exceptions import InconsistentAircraftDataError
 from app.services.aircraft_service import (
     AircraftRevisionDraft,
     empty_cg_from_moment,
     empty_moment_from_cg,
     useful_load_warning,
+    validate_revision_draft,
 )
 
 
@@ -51,3 +54,34 @@ def test_useful_load_consistency_warning_when_mismatched():
 def test_no_useful_load_provided_no_warning():
     draft = _draft(None)
     assert useful_load_warning(draft) is None
+
+
+def test_useful_load_tolerance_is_read_from_config(monkeypatch):
+    """The tolerance used to be a hardcoded module constant duplicating an already-unread
+    config field; it must now actually come from settings, live, not a value captured once
+    at import time."""
+    monkeypatch.setattr(settings, "useful_load_tolerance_lb", 100.0)
+    # Off by 50 lb -- exceeds the old hardcoded 5 lb tolerance but not this raised one.
+    draft = _draft(D("1000.0000"))
+    assert useful_load_warning(draft) is None
+
+
+def test_empty_cg_consistency_tolerance_is_read_from_config(monkeypatch):
+    monkeypatch.setattr(settings, "empty_cg_consistency_tolerance_in", 0.01)
+    mismatched = AircraftRevisionDraft(
+        basic_empty_weight_lb=D("1500"),
+        basic_empty_moment_lb_in=D("58500"),
+        basic_empty_cg_in=D("39.05"),  # 58500 / 1500 = 39.0 exactly, off by 0.05
+        max_takeoff_weight_lb=D("2550"),
+        stations=[],
+        envelope_rows=[],
+    )
+    try:
+        validate_revision_draft(mismatched)
+        raised = False
+    except InconsistentAircraftDataError:
+        raised = True
+    assert raised is True
+
+    monkeypatch.setattr(settings, "empty_cg_consistency_tolerance_in", 1.0)
+    validate_revision_draft(mismatched)  # should not raise with the widened tolerance

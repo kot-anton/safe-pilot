@@ -426,6 +426,10 @@ async def _render_fuel_prompt(message: Message, state: FSMContext, user: User, i
         keyboard = skip_cancel_keyboard(lang)
         starting = Decimal(data.get("fuel", {}).get(station_id, {}).get("starting_gal", "0"))
         kwargs = {"station": name, "available": fmt(starting, " gal")}
+        if len(fuel_ids) > 1:
+            kwargs["multi_tank_note"] = t("ask_fuel_enroute_multi_tank_note", lang)
+        else:
+            kwargs["multi_tank_note"] = ""
     await message.answer(t(text_key, lang, **kwargs), reply_markup=keyboard)
 
 

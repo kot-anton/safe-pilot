@@ -60,7 +60,7 @@ class AircraftRepository:
         self,
         user_id: int,
         tail_number: str,
-        model: str,
+        model: str | None,
         nickname: str | None,
         manufacturer: str | None,
         is_temporary: bool = False,

@@ -67,7 +67,9 @@ class Aircraft(Base):
     tail_number: Mapped[str] = mapped_column(String(16), nullable=False)
     nickname: Mapped[str | None] = mapped_column(String(64), nullable=True)
     manufacturer: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    model: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Nullable: the wizard no longer asks for model (nickname replaced it as the pilot-facing
+    # label). Kept for legacy aircraft created before this change and for any future re-add.
+    model: Mapped[str | None] = mapped_column(String(64), nullable=True)
     active_revision_id: Mapped[int | None] = mapped_column(
         ForeignKey("aircraft_revisions.id", use_alter=True, name="fk_active_revision"), nullable=True
     )
