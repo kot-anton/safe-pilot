@@ -353,7 +353,7 @@ async def _begin(
         _nav_history=[],
     )
     label = f"{aircraft.nickname} ({profile.tail_number})" if aircraft.nickname else profile.tail_number
-    await message.answer(f"Quick Calculate for {label}", reply_markup=ReplyKeyboardRemove())
+    await message.answer(f"Quick Check for {label}", reply_markup=ReplyKeyboardRemove())
 
     if front_station is not None:
         await goto(message, state, user, QuickCalcWizard.front, _ask_front, record_history=False)
@@ -850,7 +850,6 @@ async def _calculate_and_show_result(
         )
         await message.answer(recommendation_text(recommendations, lang))
 
-    await message.answer(t("what_next", lang), reply_markup=_result_keyboard(lang))
 
 
 @router.message(StateFilter(QuickCalcWizard))

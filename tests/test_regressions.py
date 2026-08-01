@@ -533,7 +533,7 @@ async def test_advanced_flow_with_only_fuel_stations_starts_at_first_tank(monkey
         ],
         envelope=None,
     )
-    aircraft = SimpleNamespace(id=1)
+    aircraft = SimpleNamespace(id=1, nickname=None)
 
     async def fake_load(*_args):
         return aircraft, profile
@@ -584,7 +584,7 @@ async def test_advanced_from_quick_reuses_loads_and_skips_to_fuel(monkeypatch):
         ],
         envelope=None,
     )
-    aircraft = SimpleNamespace(id=1)
+    aircraft = SimpleNamespace(id=1, nickname=None)
 
     async def fake_load(*_args):
         return aircraft, profile
@@ -650,7 +650,7 @@ async def test_advanced_flow_uses_canonical_station_order(monkeypatch):
         ],
         envelope=None,
     )
-    aircraft = SimpleNamespace(id=1)
+    aircraft = SimpleNamespace(id=1, nickname=None)
 
     async def fake_load(*_args):
         return aircraft, profile
@@ -751,7 +751,7 @@ async def test_fuel_enroute_prompt_warns_about_landing_only_with_multiple_tanks(
     )
     multi_message = _FakeMessage()
     await flight_calculation._render_fuel_prompt(multi_message, multi_tank_state, user, 0, "enroute")
-    assert "landing will not be evaluated for any tank, not just this one" in multi_message.answers[-1][0]
+    assert "landing will not be evaluated for any tanks" in multi_message.answers[-1][0]
 
 
 async def test_last_advanced_input_skips_quick_and_malformed_history():
