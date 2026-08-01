@@ -63,7 +63,6 @@ class AircraftRepository:
         model: str | None,
         nickname: str | None,
         manufacturer: str | None,
-        is_temporary: bool = False,
     ) -> Aircraft:
         aircraft = Aircraft(
             user_id=user_id,
@@ -71,7 +70,6 @@ class AircraftRepository:
             model=model,
             nickname=nickname,
             manufacturer=manufacturer,
-            is_temporary=is_temporary,
         )
         self.session.add(aircraft)
         await self.session.flush()

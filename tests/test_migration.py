@@ -41,15 +41,14 @@ def test_existing_data_survives_fuel_system_migration(tmp_path):
     # 3. Upgrade to head (applies the fuel-systems migration).
     command.upgrade(cfg, "head")
 
-    # 4. The pre-existing row must still be readable, and the new column must have a safe default.
+    # 4. The pre-existing row must still be readable after every later migration runs.
     engine = create_engine(sync_url)
     with engine.begin() as conn:
-        row = conn.execute(text("SELECT tail_number, is_temporary FROM aircraft WHERE id = 1")).fetchone()
+        row = conn.execute(text("SELECT tail_number FROM aircraft WHERE id = 1")).fetchone()
     engine.dispose()
 
     assert row is not None
     assert row[0] == "N123AB"
-    assert row[1] in (0, False)  # defaulted to false, not null, not dropped
 
 
 def test_postgresql_offline_migration_repairs_circular_foreign_keys_and_enum():

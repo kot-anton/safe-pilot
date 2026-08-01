@@ -36,8 +36,8 @@ def main_menu_keyboard(lang: str) -> ReplyKeyboardMarkup:
 def aircraft_submenu_keyboard(lang: str) -> ReplyKeyboardMarkup:
     rows = [
         [KeyboardButton(text=t("menu_select_aircraft", lang)), KeyboardButton(text=t("menu_add_aircraft", lang))],
-        [KeyboardButton(text=t("menu_update_aircraft", lang)), KeyboardButton(text=t("menu_rental_aircraft", lang))],
-        [KeyboardButton(text=t("menu_archive_aircraft", lang)), KeyboardButton(text=t("menu_my_aircraft", lang))],
+        [KeyboardButton(text=t("menu_update_aircraft", lang)), KeyboardButton(text=t("menu_archive_aircraft", lang))],
+        [KeyboardButton(text=t("menu_my_aircraft", lang))],
         [KeyboardButton(text=t("menu_back", lang))],
     ]
     return ReplyKeyboardMarkup(

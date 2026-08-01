@@ -349,7 +349,9 @@ async def _begin_for_aircraft(
         fuel={},
         _nav_history=[],
     )
-    await message.answer(profile.tail_number, reply_markup=ReplyKeyboardRemove())
+
+    label = f"{aircraft.nickname} ({profile.tail_number})" if aircraft.nickname else profile.tail_number
+    await message.answer(f"Advanced Check for {label}", reply_markup=ReplyKeyboardRemove())
 
     remaining_stations = [s for s in non_fuel_stations if s.station_id not in preset_loads]
     if not remaining_stations:
