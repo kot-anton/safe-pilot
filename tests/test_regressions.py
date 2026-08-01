@@ -34,6 +34,10 @@ class _FakeState:
     async def set_state(self, state):
         self.current_state = state
 
+    async def clear(self):
+        self.data = {}
+        self.current_state = None
+
     async def get_state(self):
         return self.current_state.state if hasattr(self.current_state, "state") else self.current_state
 
@@ -555,6 +559,65 @@ async def test_advanced_flow_with_only_fuel_stations_starts_at_first_tank(monkey
     assert state.current_state == FlightWizard.fuel_starting
     assert state.data["fuel_index"] == 0
     assert any("Saved usable capacity: 40 gal" in text for text, _ in message.answers)
+
+
+async def test_advanced_from_quick_reuses_loads_and_skips_to_fuel(monkeypatch):
+    """Regression: Quick -> Advanced used to re-ask front/rear/baggage from scratch."""
+    profile = AircraftProfile(
+        tail_number="N100AA",
+        revision_number=1,
+        basic_empty_weight_lb=D("1000"),
+        basic_empty_moment_lb_in=D("40000"),
+        max_takeoff_weight_lb=D("2000"),
+        stations=[
+            StationProfile("front", "Front Seats", StationType.FRONT_SEATS, D("37")),
+            StationProfile("rear", "Rear Seats", StationType.REAR_SEATS, D("73")),
+            StationProfile("baggage", "Baggage", StationType.BAGGAGE, D("95")),
+            StationProfile(
+                "fuel",
+                "Main Fuel",
+                StationType.FUEL,
+                D("48"),
+                maximum_volume_gal=D("40"),
+                fuel_density_lb_per_gal=D("6"),
+            ),
+        ],
+        envelope=None,
+    )
+    aircraft = SimpleNamespace(id=1)
+
+    async def fake_load(*_args):
+        return aircraft, profile
+
+    monkeypatch.setattr(flight_calculation, "_load_profile_and_aircraft", fake_load)
+
+    class FakeFlightService:
+        async def list_history(self, *_args, **_kwargs):
+            return []
+
+    state = _FakeState(
+        {
+            "aircraft_id": 1,
+            "front_lb": "180",
+            "rear_lb": "0",
+            "baggage_lb": "30",
+            "total_fuel_gal": "20",
+        }
+    )
+    message = _FakeMessage()
+    callback = _FakeCallback(message)
+    user = SimpleNamespace(id=7, language="en")
+
+    await flight_calculation.advanced_from_quick(
+        callback, state, user, aircraft_service=None, flight_service=FakeFlightService()
+    )
+
+    assert state.current_state == FlightWizard.fuel_starting
+    assert state.data["loads"] == {"front": "180", "rear": "0", "baggage": "30"}
+    assert not any(
+        any(word in text for word in ("Front seat", "Rear seat", "Baggage"))
+        for text, _ in message.answers
+    )
 
 
 async def test_advanced_flow_uses_canonical_station_order(monkeypatch):

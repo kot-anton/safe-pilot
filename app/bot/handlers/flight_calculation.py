@@ -42,6 +42,7 @@ from app.database.models import User
 from app.domain.envelope import LimitStatus
 from app.domain.exceptions import DomainError
 from app.domain.models import CalculationInput, CalculationResult, FuelStationInput, LoadItemInput, PhaseResult, StationType
+from app.domain.quick_calculation import quick_station_for_type
 from app.services.aircraft_service import AircraftService, suspicious_non_fuel_stations
 from app.services.flight_service import FlightService
 
@@ -204,6 +205,24 @@ async def start_calculation(
     )
 
 
+def _quick_loads_by_station(profile, data: dict) -> dict[str, str]:
+    """Maps Quick's combined weights onto their (unique) matching stations."""
+    loads: dict[str, str] = {}
+    for station_type, key in (
+        (StationType.FRONT_SEATS, "front_lb"),
+        (StationType.REAR_SEATS, "rear_lb"),
+        (StationType.BAGGAGE, "baggage_lb"),
+    ):
+        try:
+            station = quick_station_for_type(profile, station_type, station_type.value)
+        except DomainError:
+            continue
+        value = data.get(key)
+        if station is not None and value is not None:
+            loads[station.station_id] = str(value)
+    return loads
+
+
 @router.callback_query(F.data == "quick:advanced")
 async def advanced_from_quick(
     callback: CallbackQuery,
@@ -213,6 +232,31 @@ async def advanced_from_quick(
     flight_service: FlightService,
 ) -> None:
     await callback.answer()
+    data = await state.get_data()
+    quick_aircraft_id = data.get("aircraft_id")
+    preset_loads: dict[str, str] | None = None
+    if quick_aircraft_id is not None and "front_lb" in data and "total_fuel_gal" in data:
+        # Reuse Quick's front/rear/baggage weights instead of re-asking them.
+        try:
+            _, profile = await _load_profile_and_aircraft(
+                user.id, quick_aircraft_id, aircraft_service
+            )
+        except DomainError:
+            profile = None
+        if profile is not None:
+            preset_loads = _quick_loads_by_station(profile, data)
+    await state.clear()
+    if preset_loads:
+        await _begin_for_aircraft(
+            callback.message,
+            state,
+            user,
+            aircraft_service,
+            flight_service,
+            quick_aircraft_id,
+            preset_loads=preset_loads,
+        )
+        return
     await start_calculation(
         callback.message, state, user, aircraft_service, flight_service
     )
@@ -247,7 +291,10 @@ async def _begin_for_aircraft(
     aircraft_id: int,
     *,
     seed_values: dict | None = None,
+    preset_loads: dict[str, str] | None = None,
 ) -> None:
+    """`preset_loads` answers load questions outright, skipping them (unlike `seed_values`,
+    which only offers a "Use last" suggestion)."""
     lang = _lang(user)
     try:
         aircraft, profile = await _load_profile_and_aircraft(
@@ -268,6 +315,7 @@ async def _begin_for_aircraft(
 
     non_fuel_stations = [s for s in profile.stations if s.station_type != StationType.FUEL]
     fuel_stations = profile.fuel_stations
+    preset_loads = preset_loads or {}
     last = seed_values or await _last_advanced_input(
         user.id, aircraft.id, flight_service
     )
@@ -297,17 +345,20 @@ async def _begin_for_aircraft(
         last_load_values=last_load_values,
         load_index=0,
         fuel_index=0,
-        loads={},
+        loads=dict(preset_loads),
         fuel={},
         _nav_history=[],
     )
     await message.answer(profile.tail_number, reply_markup=ReplyKeyboardRemove())
 
-    if not non_fuel_stations:
+    remaining_stations = [s for s in non_fuel_stations if s.station_id not in preset_loads]
+    if not remaining_stations:
         await _ask_next_fuel_starting(message, state, user, 0, aircraft_service, flight_service)
         return
 
-    await _render_load_prompt(message, state, user, 0, show_back=False)
+    await _render_load_prompt(
+        message, state, user, non_fuel_stations.index(remaining_stations[0]), show_back=False
+    )
 
 
 async def _render_load_prompt(message: Message, state: FSMContext, user: User, index: int, *, show_back: bool = True) -> None:
