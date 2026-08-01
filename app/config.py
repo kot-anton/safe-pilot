@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./data/safe_pilot.db"
     default_language: str = "en"
     useful_load_tolerance_lb: float = 5.0
+    empty_cg_consistency_tolerance_in: float = 0.01
+    default_fuel_density_lb_per_gal: float = 6.0
     log_level: str = "INFO"
 
     def required_bot_token(self) -> str:

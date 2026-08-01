@@ -69,7 +69,8 @@ async def back_to_main_menu(message: Message, state: FSMContext, user: User) -> 
 
 def _aircraft_card(aircraft: Aircraft) -> str:
     nickname = f"\n{aircraft.nickname}" if aircraft.nickname else ""
-    return f"{aircraft.tail_number}{nickname}\n{aircraft.model}"
+    model = f"\n{aircraft.model}" if aircraft.model else ""
+    return f"{aircraft.tail_number}{nickname}{model}"
 
 
 @router.callback_query(F.data == "card:calculate")
@@ -126,7 +127,8 @@ async def cmd_cancel(message: Message, state: FSMContext, user: User) -> None:
 
 def _aircraft_banner(aircraft: Aircraft) -> str:
     nickname = f" \"{aircraft.nickname}\"" if aircraft.nickname else ""
-    return f"{aircraft.tail_number}{nickname} -- {aircraft.model}"
+    model = f" -- {aircraft.model}" if aircraft.model else ""
+    return f"{aircraft.tail_number}{nickname}{model}"
 
 
 @router.message(F.text == t("menu_my_aircraft"))

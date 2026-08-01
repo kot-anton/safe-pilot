@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from aiogram.types import BotCommandScopeAllPrivateChats, MenuButtonCommands
 
 from app.bot.commands import COMMAND_TEXT_KEYS, bot_commands, configure_bot_ui
-from app.bot.handlers.aircraft_wizard import render_summary
+from app.bot.handlers.aircraft_wizard import render_summary, start_wizard
 from app.bot.handlers.menu import _aircraft_banner, cmd_start
 from app.bot.handlers.flight_calculation import _fuel_start_keyboard, _load_keyboard
 from app.bot.handlers.quick_calculate import (
@@ -15,8 +15,9 @@ from app.bot.handlers.quick_calculate import (
     calculation_mode_keyboard,
     show_calculation_options,
 )
-from app.bot.keyboards.common import main_menu_keyboard
+from app.bot.keyboards.common import aircraft_list_keyboard, main_menu_keyboard
 from app.bot.middlewares.db_session import preferred_language
+from app.bot.states.aircraft_wizard import AircraftWizard
 from app.bot.texts.i18n import STRINGS
 
 
@@ -35,9 +36,25 @@ class _FakeBot:
 class _FakeState:
     def __init__(self):
         self.cleared = False
+        self.data = {}
+        self.current_state = None
 
     async def clear(self):
         self.cleared = True
+        self.data = {}
+        self.current_state = None
+
+    async def get_data(self):
+        return self.data
+
+    async def update_data(self, **kwargs):
+        self.data.update(kwargs)
+
+    async def set_state(self, state):
+        self.current_state = state
+
+    async def get_state(self):
+        return self.current_state.state if hasattr(self.current_state, "state") else self.current_state
 
 
 class _FakeMessage:
@@ -157,6 +174,33 @@ def test_aircraft_review_is_compact_and_hides_internal_station_enums():
     assert summary.index("Front Seats") < summary.index("Rear Seats")
 
 
+def test_aircraft_picker_label_uses_nickname_not_model():
+    """Manufacturer/model are no longer collected by the wizard, so aircraft pickers (Update,
+    Select, Archive) must key their label off nickname instead of the old "{tail} ({model})"
+    format."""
+    named = SimpleNamespace(id=1, tail_number="N100AA", nickname="The Trainer")
+    unnamed = SimpleNamespace(id=2, tail_number="N200BB", nickname=None)
+
+    keyboard = aircraft_list_keyboard([named, unnamed], "update")
+
+    assert keyboard.inline_keyboard[0][0].text == "N100AA — The Trainer"
+    assert keyboard.inline_keyboard[1][0].text == "N200BB"
+
+
+async def test_add_aircraft_goes_straight_to_tail_number_without_a_mode_picker():
+    """The Quick/Advanced Setup picker was removed entirely -- Add Aircraft should ask for the
+    tail number immediately instead of an intermediate mode-choice screen."""
+    state = _FakeState()
+    message = _FakeMessage()
+    user = SimpleNamespace(id=1, language="en")
+
+    await start_wizard(message, state, user)
+
+    assert state.current_state == AircraftWizard.tail_number
+    assert not any("Quick Setup" in text or "Advanced Setup" in text for text, _ in message.answers)
+    assert any("tail number" in text.lower() for text, _ in message.answers)
+
+
 def _inline_callbacks(keyboard):
     return [button.callback_data for row in keyboard.inline_keyboard for button in row]
 
@@ -194,6 +238,35 @@ def test_calculation_shortcuts_do_not_offer_literal_zero_buttons():
         for row in keyboard.inline_keyboard
         for button in row
     )
+
+
+def test_quick_calc_offers_one_tap_zero_shortcuts():
+    """A pilot with an empty seat/no baggage/dry tanks can tap a "0" shortcut instead of
+    typing it -- the callback these buttons emit must match what quick_calculate.py listens
+    for (quick:zero), reachable buttons registered without a handler are as useless as an
+    unreachable handler."""
+    quick_load = _step_keyboard("en", last_value=None, unit="lb")
+    quick_fuel = _fuel_keyboard("en", full_gal=Decimal("53.0000"))
+
+    load_callbacks = _inline_callbacks(quick_load)
+    fuel_callbacks = _inline_callbacks(quick_fuel)
+    assert "quick:zero" in load_callbacks
+    assert "quick:zero" in fuel_callbacks
+
+    load_zero_button = next(
+        button
+        for row in quick_load.inline_keyboard
+        for button in row
+        if button.callback_data == "quick:zero"
+    )
+    fuel_zero_button = next(
+        button
+        for row in quick_fuel.inline_keyboard
+        for button in row
+        if button.callback_data == "quick:zero"
+    )
+    assert load_zero_button.text == "0 (none)"
+    assert fuel_zero_button.text == "0 (no fuel)"
 
 
 def test_new_user_language_is_always_english():

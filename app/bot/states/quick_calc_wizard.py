@@ -6,5 +6,4 @@ class QuickCalcWizard(StatesGroup):
     rear = State()
     baggage = State()
     fuel = State()
-    fuel_exact_split = State()
     review = State()

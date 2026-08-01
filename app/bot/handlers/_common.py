@@ -27,21 +27,21 @@ def parse_decimal(text: str, *, allow_negative: bool = False) -> Decimal:
 
 
 def parse_optional_decimal(text: str) -> Decimal | None:
-    if text.strip().lower() in {"skip", "-", "пропустить"}:
+    if text.strip().lower() in {"skip", "-"}:
         return None
     return parse_decimal(text)
 
 
 def parse_optional_text(text: str) -> str | None:
     text = text.strip()
-    if not text or text.lower() in {"skip", "-", "пропустить"}:
+    if not text or text.lower() in {"skip", "-"}:
         return None
     return text
 
 
 def parse_optional_date(text: str) -> datetime.date | None:
     text = text.strip()
-    if not text or text.lower() in {"skip", "-", "пропустить"}:
+    if not text or text.lower() in {"skip", "-"}:
         return None
     try:
         return datetime.date.fromisoformat(text)

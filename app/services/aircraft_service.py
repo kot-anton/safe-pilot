@@ -9,6 +9,7 @@ import datetime
 from dataclasses import dataclass
 from decimal import Decimal
 
+from app.config import settings
 from app.database.models import Aircraft, AircraftRevision, StationTypeEnum
 from app.domain.envelope import CGEnvelope, EnvelopeRow
 from app.domain.exceptions import InconsistentAircraftDataError
@@ -21,8 +22,12 @@ from app.domain.models import (
 from app.domain.units import compact_decimal
 from app.repositories.aircraft_repository import AircraftRepository
 
-USEFUL_LOAD_TOLERANCE_LB = Decimal("5.0")
-EMPTY_CG_CONSISTENCY_TOLERANCE_IN = Decimal("0.01")
+def _useful_load_tolerance_lb() -> Decimal:
+    return Decimal(str(settings.useful_load_tolerance_lb))
+
+
+def _empty_cg_consistency_tolerance_in() -> Decimal:
+    return Decimal(str(settings.empty_cg_consistency_tolerance_in))
 
 
 @dataclass(frozen=True)
@@ -84,17 +89,14 @@ def empty_cg_from_moment(weight_lb: Decimal, moment_lb_in: Decimal) -> Decimal:
 
 
 def validate_aircraft_identity(
-    tail_number: str, model: str, nickname: str | None, manufacturer: str | None
+    tail_number: str, model: str | None, nickname: str | None, manufacturer: str | None
 ) -> None:
     tail = tail_number.strip()
-    model_name = model.strip()
     if not tail:
         raise InconsistentAircraftDataError("Aircraft tail number or identifier is required")
     if len(tail) > 16:
         raise InconsistentAircraftDataError("Aircraft identifier must be 16 characters or fewer")
-    if not model_name:
-        raise InconsistentAircraftDataError("Aircraft model is required")
-    if len(model_name) > 64:
+    if model is not None and len(model.strip()) > 64:
         raise InconsistentAircraftDataError("Aircraft model must be 64 characters or fewer")
     if nickname is not None and len(nickname.strip()) > 64:
         raise InconsistentAircraftDataError("Aircraft nickname must be 64 characters or fewer")
@@ -119,7 +121,7 @@ def validate_revision_draft(draft: "AircraftRevisionDraft") -> None:
     calculated_cg = empty_cg_from_moment(
         draft.basic_empty_weight_lb, draft.basic_empty_moment_lb_in
     )
-    if abs(calculated_cg - draft.basic_empty_cg_in) > EMPTY_CG_CONSISTENCY_TOLERANCE_IN:
+    if abs(calculated_cg - draft.basic_empty_cg_in) > _empty_cg_consistency_tolerance_in():
         raise InconsistentAircraftDataError(
             "Basic Empty Weight, Moment, and CG are inconsistent: "
             f"Moment / Weight gives {compact_decimal(calculated_cg, decimal_places=4)} in, "
@@ -187,14 +189,15 @@ def useful_load_warning(draft: AircraftRevisionDraft) -> str | None:
     calculated value beyond tolerance. Useful load is never used to derive CG."""
     if draft.known_useful_load_lb is None:
         return None
+    tolerance = _useful_load_tolerance_lb()
     calculated = draft.max_takeoff_weight_lb - draft.basic_empty_weight_lb
     diff = abs(calculated - draft.known_useful_load_lb)
-    if diff > USEFUL_LOAD_TOLERANCE_LB:
+    if diff > tolerance:
         return (
             f"Entered known useful load ({compact_decimal(draft.known_useful_load_lb)} lb) "
             f"differs from the calculated takeoff useful load "
             f"({compact_decimal(calculated)} lb) by {compact_decimal(diff)} lb, which exceeds "
-            f"the configured tolerance ({compact_decimal(USEFUL_LOAD_TOLERANCE_LB)} lb). "
+            f"the configured tolerance ({compact_decimal(tolerance)} lb). "
             "Please double-check your entries."
         )
     return None
@@ -217,7 +220,7 @@ class AircraftService:
         self,
         user_id: int,
         tail_number: str,
-        model: str,
+        model: str | None,
         nickname: str | None,
         manufacturer: str | None,
         draft: AircraftRevisionDraft,

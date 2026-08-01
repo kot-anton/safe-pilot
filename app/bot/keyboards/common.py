@@ -230,9 +230,15 @@ def envelope_keyboard(lang: str, *, has_rows: bool = False, show_back: bool = Tr
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def _aircraft_picker_label(aircraft: Aircraft) -> str:
+    if aircraft.nickname:
+        return f"{aircraft.tail_number} — {aircraft.nickname}"
+    return aircraft.tail_number
+
+
 def aircraft_list_keyboard(aircraft_list: list[Aircraft], prefix: str) -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text=f"{a.tail_number} ({a.model})", callback_data=f"{prefix}:{a.id}")]
+        [InlineKeyboardButton(text=_aircraft_picker_label(a), callback_data=f"{prefix}:{a.id}")]
         for a in aircraft_list
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)

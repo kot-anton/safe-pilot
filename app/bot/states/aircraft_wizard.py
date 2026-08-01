@@ -4,8 +4,6 @@ from aiogram.fsm.state import State, StatesGroup
 class AircraftWizard(StatesGroup):
     tail_number = State()
     nickname = State()
-    manufacturer = State()
-    model = State()
     empty_weight = State()
     cg_or_moment_choice = State()
     empty_cg = State()
@@ -14,7 +12,6 @@ class AircraftWizard(StatesGroup):
     max_takeoff_weight = State()
     max_landing_weight = State()
     max_zfw = State()
-    known_useful_load = State()
 
     station_add_prompt = State()
     station_name = State()
@@ -25,15 +22,12 @@ class AircraftWizard(StatesGroup):
     station_max_arm = State()
     station_max_weight = State()
     station_fuel_max_volume = State()
-    station_fuel_density = State()
     station_edit_name = State()
     station_edit_type = State()
     station_edit_arm = State()
     station_edit_max_weight = State()
     station_edit_fuel_volume = State()
-    station_edit_fuel_density = State()
 
-    total_usable_fuel = State()
     envelope_rows = State()
 
     review = State()

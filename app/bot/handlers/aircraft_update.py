@@ -7,8 +7,6 @@ need new input.
 """
 from __future__ import annotations
 
-from decimal import Decimal
-
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
@@ -93,14 +91,6 @@ async def update_aircraft_chosen(
         }
         for s in revision_stations
     ]
-    total_usable_fuel = sum(
-        (
-            s.maximum_volume_gal
-            for s in revision_stations
-            if s.station_type.value == "FUEL" and s.maximum_volume_gal is not None
-        ),
-        Decimal("0"),
-    )
     envelope_rows = [
         {
             "weight_lb": compact_decimal(r.weight_lb),
@@ -134,7 +124,6 @@ async def update_aircraft_chosen(
         known_useful_load_lb=compact_decimal(revision.known_useful_load_lb)
         if revision.known_useful_load_lb is not None
         else None,
-        total_usable_fuel_gal=compact_decimal(total_usable_fuel),
         source_document_name=revision.source_document_name,
         source_document_date=revision.source_document_date.isoformat() if revision.source_document_date else None,
         stations=stations,
