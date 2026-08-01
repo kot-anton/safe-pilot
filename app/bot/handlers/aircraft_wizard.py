@@ -499,18 +499,6 @@ async def start_wizard(message: Message, state: FSMContext, user: User) -> None:
     await goto(message, state, user, AircraftWizard.tail_number, render_tail_number, record_history=False)
 
 
-@router.message(F.text == t("menu_rental_aircraft"))
-async def start_rental_wizard(message: Message, state: FSMContext, user: User) -> None:
-    """Rental aircraft go through the same questions as any other aircraft -- only flagged as
-    temporary so it can be told apart later (e.g. for a future auto-archive pass)."""
-    await state.clear()
-    await state.update_data(stations=[], envelope_rows=[], is_temporary=True)
-    await message.answer(
-        t("rental_setup_started", _lang(user)), reply_markup=ReplyKeyboardRemove()
-    )
-    await goto(message, state, user, AircraftWizard.tail_number, render_tail_number, record_history=False)
-
-
 @router.callback_query(F.data == "wizard:cancel")
 async def wizard_cancel(callback: CallbackQuery, state: FSMContext, user: User) -> None:
     # Deliberately unscoped: flight_calculation.py's keyboards also emit "wizard:cancel" and
@@ -1488,7 +1476,6 @@ async def review_confirm(
                 data.get("nickname"),
                 data.get("manufacturer"),
                 draft,
-                is_temporary=bool(data.get("is_temporary")),
             )
     except (DomainError, InvalidOperation, KeyError, ValueError) as exc:
         # Validation happens before any database write. Keep the wizard open so the pilot can

@@ -352,7 +352,8 @@ async def _begin(
         ],
         _nav_history=[],
     )
-    await message.answer(f"Quick Calculate for {profile.nickname} ({profile.tail_number})", reply_markup=ReplyKeyboardRemove())
+    label = f"{aircraft.nickname} ({profile.tail_number})" if aircraft.nickname else profile.tail_number
+    await message.answer(f"Quick Calculate for {label}", reply_markup=ReplyKeyboardRemove())
 
     if front_station is not None:
         await goto(message, state, user, QuickCalcWizard.front, _ask_front, record_history=False)

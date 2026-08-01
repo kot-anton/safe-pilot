@@ -214,12 +214,11 @@ class AircraftService:
         nickname: str | None,
         manufacturer: str | None,
         draft: AircraftRevisionDraft,
-        is_temporary: bool = False,
     ) -> Aircraft:
         validate_aircraft_identity(tail_number, model, nickname, manufacturer)
         validate_revision_draft(draft)
         aircraft = await self.repo.create_aircraft(
-            user_id, tail_number, model, nickname, manufacturer, is_temporary
+            user_id, tail_number, model, nickname, manufacturer
         )
         await self._add_revision(aircraft, draft)
         # A newly created aircraft becomes the active one automatically -- no separate
