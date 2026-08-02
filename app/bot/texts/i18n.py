@@ -136,7 +136,7 @@ STRINGS: dict[str, str] = {
     'quick_review_baggage': 'Baggage',
     'quick_review_fuel': 'Usable fuel',
     'fuel_capacity_exceeded': 'Fuel exceeds the combined usable capacity ({capacity}).',
-    'fuel_tank_capacity_exceeded': "Fuel exceeds this tank's usable capacity ({capacity}).",
+    'fuel_tank_capacity_exceeded': "This Fuel amount exceeds this tank's usable capacity ({capacity}). Enter a lower value.",
     'fuel_burn_exceeded': 'Fuel burn cannot exceed starting fuel ({available}).',
     'exact_tank_split_required': 'Enter the actual gallons in each tank for an exact result.',
     'choose_calculation_mode': 'Choose a calculation type:\n\nTakeoff (Quick): enter combined seat and baggage weights, plus total fuel on board.\n\nTakeoff + Landing (Advanced): enter each station and tank individually, then add planned fuel burn to also check the landing condition.',

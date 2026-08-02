@@ -19,7 +19,6 @@ from app.domain.quick_calculation import (
     quick_station_for_type,
     run_quick_calculation,
 )
-from app.domain.recommendations import FUEL_REDUCTION_NOTE
 from app.domain.units import compact_decimal, lb_to_kg
 
 LOAD_STEP_LB = Decimal("1")
@@ -30,6 +29,7 @@ MAX_FUEL_STEPS = 5000
 
 class QuickRecommendationKind(str, Enum):
     REDUCE_BAGGAGE = "REDUCE_BAGGAGE"
+    ADD_BAGGAGE = "ADD_BAGGAGE"
     REDUCE_FUEL = "REDUCE_FUEL"
 
 
@@ -41,7 +41,6 @@ class QuickRecommendation:
     station_name: str | None = None
     target_baggage_lb: Decimal | None = None
     target_total_fuel_gal: Decimal | None = None
-    note: str | None = None
 
     def describe(self) -> str:
         def display(value: Decimal) -> str:
@@ -56,6 +55,9 @@ class QuickRecommendation:
             if self.target_baggage_lb is not None:
                 text += f" Target baggage load: {display(self.target_baggage_lb)} lb."
             return text
+        if self.kind == QuickRecommendationKind.ADD_BAGGAGE:
+            kg = lb_to_kg(self.delta_lb)
+            return f"Add {display(self.delta_lb)} lb ({display(kg)} kg) to {self.station_name}."
         if self.kind == QuickRecommendationKind.REDUCE_FUEL:
             text = f"Reduce total usable fuel by {display(self.delta_gal)} US gal."
             if self.delta_lb is not None:
@@ -133,6 +135,26 @@ def generate_quick_recommendations(
                 )
                 break
 
+    if baggage_station is not None:
+        baseline = _try_quick(profile, front_lb, rear_lb, baggage_lb, total_fuel_gal)
+        headroom = baseline.weight_margin_lb if baseline is not None else None
+        if headroom is not None and headroom > 0:
+            steps = min(int(headroom / LOAD_STEP_LB), MAX_LOAD_STEPS)
+            for step in range(1, steps + 1):
+                delta = LOAD_STEP_LB * step
+                target = baggage_lb + delta
+                result = _try_quick(profile, front_lb, rear_lb, target, total_fuel_gal)
+                if result and _candidate_is_acceptable(result):
+                    candidates.append(
+                        QuickRecommendation(
+                            kind=QuickRecommendationKind.ADD_BAGGAGE,
+                            delta_lb=delta,
+                            station_name=baggage_station.name,
+                            target_baggage_lb=target,
+                        )
+                    )
+                    break
+
     density = _common_fuel_density(profile)
     if total_fuel_gal > 0 and density is not None:
         steps = min(int(total_fuel_gal / FUEL_STEP_GAL), MAX_FUEL_STEPS)
@@ -147,7 +169,6 @@ def generate_quick_recommendations(
                         delta_gal=delta,
                         delta_lb=delta * density,
                         target_total_fuel_gal=target,
-                        note=FUEL_REDUCTION_NOTE,
                     )
                 )
                 break
@@ -155,6 +176,7 @@ def generate_quick_recommendations(
     priority = {
         QuickRecommendationKind.REDUCE_BAGGAGE: 0,
         QuickRecommendationKind.REDUCE_FUEL: 1,
+        QuickRecommendationKind.ADD_BAGGAGE: 2,
     }
 
     def amount(recommendation: QuickRecommendation) -> Decimal:
