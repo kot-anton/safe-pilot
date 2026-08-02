@@ -1,10 +1,11 @@
 """Deterministic recommendation solver for the Advanced per-station calculation.
 
 Every candidate is applied to a copy of the input and run through the complete calculator before
-it is returned. Passenger reseating is deliberately never suggested: Front Seats is always
-occupied by required crew (pilot, and an instructor in a side-by-side trainer), so this solver
-only moves existing baggage between baggage stations, adds baggage (bounded by max takeoff
-weight, since there's no per-station published limit anymore), and adjusts fuel.
+it is returned. Moves are searched within a seat pair (Front <-> Rear) or within baggage
+stations -- never between the two, and never touching an ambiguous CUSTOM station. Seat-to-seat
+suggestions are phrased as a plain weight shift ("Move X lb from Front Seats to Rear Seats")
+without asserting who moves -- the app has no way to know who is sitting where, so it leaves
+that call to the pilot.
 """
 from __future__ import annotations
 
@@ -152,9 +153,10 @@ def _current_load_weight(calc_input: CalculationInput, station_id: str) -> Decim
 
 
 # Moves are only ever searched within one of these groups -- never between them, and never
-# touching FRONT_SEATS (always occupied by required crew: pilot, and an instructor in a
-# side-by-side trainer -- reseating them isn't a real option) or an ambiguous CUSTOM station.
+# touching an ambiguous CUSTOM station (could be equipment, a fixed installation, or movable
+# cargo -- no way to tell automatically).
 _MOVABLE_GROUPS = (
+    {StationType.FRONT_SEATS, StationType.REAR_SEATS},
     {StationType.BAGGAGE},
 )
 
@@ -162,7 +164,12 @@ _MOVABLE_GROUPS = (
 def _search_move_load(
     profile: AircraftProfile, calc_input: CalculationInput
 ) -> list[Recommendation]:
-    """Suggest shifting weight within baggage stations. Never suggests reseating occupants."""
+    """Suggest shifting weight within a seat pair or within baggage stations.
+
+    Seat-to-seat suggestions are phrased as a plain weight shift ("Move X lb from Front Seats
+    to Rear Seats") -- the app has no way to know who is sitting where, so it never names a
+    specific occupant or asserts who should move.
+    """
     results: list[Recommendation] = []
     for group in _MOVABLE_GROUPS:
         movable = [station for station in profile.stations if station.station_type in group]

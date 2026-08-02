@@ -196,10 +196,11 @@ def test_recommendation_never_reduces_fuel_below_pilot_minimum():
         assert remaining >= D("39.9")
 
 
-def test_recommendation_never_moves_weight_out_of_front_seats():
-    """Front Seats is always occupied by required crew (pilot, and an instructor in a
-    side-by-side trainer) -- even when front-heavy loading pushes CG forward of the limit,
-    the solver must never suggest reseating them, since that isn't a real option."""
+def test_recommendation_suggests_moving_weight_between_front_and_rear_seats():
+    """Front<->Rear seat moves are suggested generically ("Move X lb from Front Seats to Rear
+    Seats") -- deliberately without naming who moves, since the app cannot know who is sitting
+    where. This is an explicit product decision by the aircraft owner: some pilots always fly
+    solo with a fixed, known loading, so the suggestion is theirs to accept or ignore."""
     from app.domain.envelope import CGEnvelope, EnvelopeRow
     from app.domain.models import AircraftProfile, StationProfile, StationType
 
@@ -237,8 +238,11 @@ def test_recommendation_never_moves_weight_out_of_front_seats():
 
     recs = generate_recommendations(profile, calc_input)
     move_recs = [r for r in recs if r.kind == RecommendationKind.MOVE_LOAD]
-    assert not any(r.station_id == "front" for r in move_recs)
-    assert not any(r.target_station_id == "front" for r in move_recs)
+    front_to_rear = [
+        r for r in move_recs if r.station_id == "front" and r.target_station_id == "rear"
+    ]
+    assert front_to_rear, "expected a Front Seats -> Rear Seats move suggestion"
+    assert front_to_rear[0].describe() == "Move 55 lb (24.9 kg) from Front Seats to Rear Seats."
 
 
 def test_recommendation_does_not_move_ambiguous_custom_load():
