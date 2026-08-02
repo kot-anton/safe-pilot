@@ -737,12 +737,16 @@ def _result_text(
         )
 
     direction = _cg_violation_direction(result)
+    # "At least" only makes sense when the fuel split is genuinely ambiguous (a range of
+    # possible CGs) -- with is_exact, cg_forward == cg_aft and the violation amount is exact,
+    # not a lower bound, so it gets the same plain phrasing as the Advanced flow.
+    hedge = "At least " if not result.is_exact else ""
     if direction == "forward":
         violation = result.aft_check.forward_limit_in - result.cg_aft
-        lines.append(f"At least {fmt(violation, ' in')} forward of limit.")
+        lines.append(f"{hedge}{fmt(violation, ' in')} forward of the permitted limit.")
     elif direction == "aft":
         violation = result.cg_forward - result.forward_check.aft_limit_in
-        lines.append(f"At least {fmt(violation, ' in')} aft of limit.")
+        lines.append(f"{hedge}{fmt(violation, ' in')} aft of the permitted limit.")
     elif result.fuel_range_status == FuelRangeStatus.EXACT_SPLIT_REQUIRED:
         lines.append("Some possible tank splits are within limits and some are not.")
 
