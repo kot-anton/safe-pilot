@@ -835,12 +835,24 @@ async def _calculate_and_show_result(
     )
     await message.answer("\n".join(summary_lines))
 
-    await message.answer(_result_text(result, profile.tail_number, lang))
+    exact_split_needed = result.fuel_range_status == FuelRangeStatus.EXACT_SPLIT_REQUIRED
+    out_of_limits = result.overall_status == LimitStatus.OUT_OF_LIMITS
 
-    if result.fuel_range_status == FuelRangeStatus.EXACT_SPLIT_REQUIRED:
-        await message.answer(t("exact_tank_split_required", lang))
+    # The result keyboard (Change load / Advanced-Landing / Main menu) always attaches to
+    # whichever message ends up last, matching the Advanced flow -- never a separate
+    # keyboard-only message.
+    await message.answer(
+        _result_text(result, profile.tail_number, lang),
+        reply_markup=_result_keyboard(lang) if not (exact_split_needed or out_of_limits) else None,
+    )
 
-    if result.overall_status == LimitStatus.OUT_OF_LIMITS:
+    if exact_split_needed:
+        await message.answer(
+            t("exact_tank_split_required", lang),
+            reply_markup=_result_keyboard(lang) if not out_of_limits else None,
+        )
+
+    if out_of_limits:
         recommendations = flight_service.recommend_quick(
             profile,
             front_lb=front,
@@ -848,7 +860,9 @@ async def _calculate_and_show_result(
             baggage_lb=baggage,
             total_fuel_gal=total_fuel,
         )
-        await message.answer(recommendation_text(recommendations, lang))
+        await message.answer(
+            recommendation_text(recommendations, lang), reply_markup=_result_keyboard(lang)
+        )
 
 
 

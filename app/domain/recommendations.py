@@ -23,14 +23,6 @@ FUEL_STEP_GAL = Decimal("0.1")
 LOAD_STEP_LB = Decimal("1")
 MAX_STEPS = 5000
 
-FUEL_REDUCTION_NOTE = (
-    "Use only if required trip fuel, reserve fuel, and tank limitations remain satisfied."
-)
-ADDED_LOAD_NOTE = (
-    "Use only permitted load, keep within the published compartment limit, and secure it "
-    "in accordance with the aircraft documents."
-)
-
 
 class RecommendationKind(str, Enum):
     REDUCE_FUEL = "REDUCE_FUEL"
@@ -265,7 +257,6 @@ def _search_add_baggage(
                         station_id=station.station_id,
                         station_name=station.name,
                         delta_lb=delta,
-                        note=ADDED_LOAD_NOTE,
                     )
                 )
                 break
@@ -301,7 +292,6 @@ def _search_reduce_fuel(
                         delta_gal=delta_gal,
                         resulting_gal=target,
                         tank_capacity_gal=station.maximum_volume_gal,
-                        note=FUEL_REDUCTION_NOTE,
                     )
                 )
                 break

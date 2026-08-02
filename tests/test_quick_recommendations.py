@@ -105,7 +105,6 @@ def test_quick_recommendation_reduces_fuel_and_never_reseats_passengers():
         rec for rec in recommendations if rec.kind == QuickRecommendationKind.REDUCE_FUEL
     )
     assert fuel.target_total_fuel_gal is not None
-    assert fuel.note is not None
     fixed = run_quick_calculation(
         profile, D("300"), D("0"), D("0"), fuel.target_total_fuel_gal
     )
