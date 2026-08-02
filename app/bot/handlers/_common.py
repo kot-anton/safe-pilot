@@ -92,8 +92,11 @@ def recommendation_text(recommendations, lang_code: str) -> str:
     lines = [t("recommendations_header", lang_code)]
     for index, recommendation in enumerate(recommendations, start=1):
         lines.append(f"{index}. {recommendation.describe()}")
-        if recommendation.note:
-            lines.append(f"   {recommendation.note}")
+        # QuickRecommendation has no `note` field at all (Quick never sets one); Advanced's
+        # Recommendation still carries one for SHIFT_FUEL -- getattr covers both shapes.
+        note = getattr(recommendation, "note", None)
+        if note:
+            lines.append(f"   {note}")
     return "\n".join(lines)
 
 

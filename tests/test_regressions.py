@@ -3,6 +3,7 @@ from decimal import Decimal as D
 from types import SimpleNamespace
 
 from app.bot.handlers import aircraft_wizard, flight_calculation, quick_calculate
+from app.bot.handlers._common import recommendation_text
 from app.bot.handlers.aircraft_wizard import _apply_station_type_change, got_station_edit_arm
 from app.bot.handlers.flight_calculation import _history_summary
 from app.bot.states.aircraft_wizard import AircraftWizard
@@ -17,6 +18,7 @@ from app.domain.models import (
     LoadItemInput,
     PhaseResult,
 )
+from app.domain.quick_recommendations import QuickRecommendation, QuickRecommendationKind
 from app.services.flight_service import _snapshot
 
 
@@ -1027,3 +1029,20 @@ async def test_station_edit_list_is_canonical_but_keeps_original_callback_indexe
         "wizard:edit_at:3",
         "wizard:edit_at:1",
     ]
+
+
+def test_recommendation_text_handles_quick_recommendations_without_note():
+    """Regression: QuickRecommendation has no `note` field (Quick never sets one), but
+    recommendation_text() is shared with Advanced's Recommendation, which still has one for
+    SHIFT_FUEL. Accessing `.note` unconditionally crashed the moment a Quick Calculation
+    produced any recommendation at all."""
+    recs = [
+        QuickRecommendation(
+            kind=QuickRecommendationKind.REDUCE_FUEL,
+            delta_gal=D("0.1"),
+            delta_lb=D("0.6"),
+            target_total_fuel_gal=D("39.9"),
+        )
+    ]
+    text = recommendation_text(recs, "en")
+    assert "Reduce total usable fuel" in text
