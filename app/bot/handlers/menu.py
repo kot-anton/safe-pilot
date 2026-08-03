@@ -3,6 +3,8 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from app.bot.handlers.aircraft_update import build_revision_summary_data
+from app.bot.handlers.aircraft_wizard import render_summary
 from app.bot.keyboards.common import (
     aircraft_card_keyboard,
     aircraft_list_keyboard,
@@ -233,3 +235,43 @@ async def archive_aircraft_chosen(
     await callback.message.edit_text(t("aircraft_archived", lang, aircraft=aircraft.tail_number))
     await callback.answer()
     await callback.message.answer(t("main_menu", lang), reply_markup=main_menu_keyboard(lang))
+
+
+@router.message(F.text == t("menu_download_data"))
+async def download_data_prompt(
+    message: Message,
+    state: FSMContext,
+    user: User,
+    aircraft_service: AircraftService,
+) -> None:
+    await state.clear()
+    lang = _lang(user)
+    aircraft_list = await aircraft_service.list_aircraft(user.id)
+    if not aircraft_list:
+        await message.answer(t("no_aircraft_yet", lang))
+        return
+    await message.answer(
+        t("select_aircraft_prompt", lang), reply_markup=aircraft_list_keyboard(aircraft_list, "download")
+    )
+
+
+@router.callback_query(F.data.startswith("download:"))
+async def download_data_chosen(
+    callback: CallbackQuery,
+    state: FSMContext,
+    user: User,
+    aircraft_service: AircraftService,
+) -> None:
+    lang = _lang(user)
+    aircraft_id = int(callback.data.split(":")[1])
+    aircraft = await aircraft_service.get_aircraft(user.id, aircraft_id)
+    if aircraft is None or aircraft.active_revision_id is None:
+        await callback.answer(t("aircraft_not_found", lang), show_alert=True)
+        return
+    revision = await aircraft_service.get_revision_for_user(user.id, aircraft.active_revision_id)
+    if revision is None:
+        await callback.answer(t("aircraft_not_found", lang), show_alert=True)
+        return
+    summary_data = build_revision_summary_data(aircraft, revision)
+    await callback.message.answer(render_summary(summary_data, lang))
+    await callback.answer()

@@ -94,6 +94,27 @@ def test_main_menu_reply_keyboard_is_persistent_and_localized():
     assert english.input_field_placeholder == STRINGS["menu_placeholder"]
 
 
+def test_download_data_menu_string_exists():
+    assert STRINGS["menu_download_data"] == "📥 Download Data"
+
+
+def test_aircraft_submenu_offers_download_data_as_its_own_row():
+    from app.bot.keyboards.common import aircraft_submenu_keyboard
+
+    keyboard = aircraft_submenu_keyboard("en")
+
+    row_texts = [[button.text for button in row] for row in keyboard.keyboard]
+    assert [STRINGS["menu_download_data"]] in row_texts
+    download_row_index = row_texts.index([STRINGS["menu_download_data"]])
+    my_aircraft_row_index = next(
+        i for i, row in enumerate(row_texts) if row == [STRINGS["menu_my_aircraft"]]
+    )
+    back_row_index = next(
+        i for i, row in enumerate(row_texts) if row == [STRINGS["menu_back"]]
+    )
+    assert my_aircraft_row_index < download_row_index < back_row_index
+
+
 def test_aircraft_review_is_compact_and_hides_internal_station_enums():
     data = {
         "tail_number": "N4508D",

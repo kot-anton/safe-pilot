@@ -1137,3 +1137,326 @@ async def test_update_aircraft_chosen_starts_at_tail_number():
     assert state.current_state == AircraftWizard.tail_number
     assert state.data["tail_number"] == "N123AB"
     assert state.data["nickname"] == "Old Bird"
+
+
+async def test_download_data_prompt_lists_aircraft():
+    from app.bot.handlers import menu
+
+    class FakeAircraftService:
+        async def list_aircraft(self, user_id):
+            return [SimpleNamespace(id=1, tail_number="N123AB", nickname=None)]
+
+    message = _FakeMessage()
+    state = _FakeState({})
+    user = SimpleNamespace(id=1, language="en")
+
+    await menu.download_data_prompt(
+        message, state, user, aircraft_service=FakeAircraftService()
+    )
+
+    assert state.data == {}
+    prompt, kwargs = message.answers[-1]
+    assert prompt == "Select an aircraft:"
+    assert kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "download:1"
+
+
+async def test_download_data_prompt_handles_no_aircraft():
+    from app.bot.handlers import menu
+
+    class FakeAircraftService:
+        async def list_aircraft(self, user_id):
+            return []
+
+    message = _FakeMessage()
+    state = _FakeState({})
+    user = SimpleNamespace(id=1, language="en")
+
+    await menu.download_data_prompt(
+        message, state, user, aircraft_service=FakeAircraftService()
+    )
+
+    assert message.answers[-1][0] == "You have no aircraft yet. Use \"Add Aircraft\" to create one."
+
+
+async def test_download_data_chosen_replies_with_summary_and_no_state_change():
+    from app.bot.handlers import menu
+
+    class _FakeStation:
+        def __init__(self):
+            self.name = "Front Seats"
+            self.station_type = StationTypeEnum.FRONT_SEATS
+            self.display_order = 0
+            self.active = True
+            self.default_arm_in = D("89")
+            self.maximum_volume_gal = None
+            self.fuel_density_lb_per_gal = None
+
+    aircraft = SimpleNamespace(
+        id=1,
+        tail_number="N123AB",
+        model="172",
+        nickname="Old Bird",
+        manufacturer=None,
+        active_revision_id=9,
+    )
+    revision = SimpleNamespace(
+        stations=[_FakeStation()],
+        envelope_rows=[],
+        basic_empty_weight_lb=D("1500"),
+        basic_empty_cg_in=D("39"),
+        basic_empty_moment_lb_in=D("58500"),
+        max_ramp_weight_lb=None,
+        max_takeoff_weight_lb=D("2550"),
+        max_landing_weight_lb=None,
+        known_useful_load_lb=None,
+        source_document_name=None,
+        source_document_date=None,
+    )
+
+    class FakeAircraftService:
+        async def get_aircraft(self, user_id, aircraft_id):
+            return aircraft
+
+        async def get_revision_for_user(self, user_id, revision_id):
+            return revision
+
+    user = SimpleNamespace(id=1, language="en")
+    state = _FakeState(
+        {"some_stale_key": "some_stale_value"}, current_state="some_stale_state"
+    )
+    callback = _FakeCallback(_FakeMessage())
+    callback.data = "download:1"
+
+    await menu.download_data_chosen(
+        callback, state, user, aircraft_service=FakeAircraftService()
+    )
+
+    assert state.data == {"some_stale_key": "some_stale_value"}
+    assert state.current_state == "some_stale_state"
+    reply_text, _ = callback.message.answers[-1]
+    assert "N123AB — 172" in reply_text
+    assert "Front Seats" in reply_text
+    assert callback.answers == [((), {})]
+
+
+async def test_download_data_chosen_alerts_when_aircraft_not_found():
+    from app.bot.handlers import menu
+
+    class FakeAircraftService:
+        async def get_aircraft(self, user_id, aircraft_id):
+            return None
+
+    user = SimpleNamespace(id=1, language="en")
+    state = _FakeState({})
+    callback = _FakeCallback(_FakeMessage())
+    callback.data = "download:1"
+
+    await menu.download_data_chosen(
+        callback, state, user, aircraft_service=FakeAircraftService()
+    )
+
+    assert callback.answers == [
+        (("Aircraft not found. It may have been archived.",), {"show_alert": True})
+    ]
+    assert callback.message.answers == []
+
+
+async def test_download_data_chosen_alerts_when_aircraft_has_no_active_revision():
+    from app.bot.handlers import menu
+
+    class FakeAircraftService:
+        async def get_aircraft(self, user_id, aircraft_id):
+            return SimpleNamespace(id=1, tail_number="N123AB", active_revision_id=None)
+
+    user = SimpleNamespace(id=1, language="en")
+    state = _FakeState({})
+    callback = _FakeCallback(_FakeMessage())
+    callback.data = "download:1"
+
+    await menu.download_data_chosen(
+        callback, state, user, aircraft_service=FakeAircraftService()
+    )
+
+    assert callback.answers == [
+        (("Aircraft not found. It may have been archived.",), {"show_alert": True})
+    ]
+    assert callback.message.answers == []
+
+
+async def test_build_revision_summary_data_shapes_stations_and_envelope():
+    class _FakeStation:
+        def __init__(
+            self,
+            name="Front Seats",
+            station_type=StationTypeEnum.FRONT_SEATS,
+            display_order=0,
+            active=True,
+            default_arm_in=D("89"),
+            maximum_volume_gal=None,
+            fuel_density_lb_per_gal=None,
+        ):
+            self.name = name
+            self.station_type = station_type
+            self.display_order = display_order
+            self.active = active
+            self.default_arm_in = default_arm_in
+            self.maximum_volume_gal = maximum_volume_gal
+            self.fuel_density_lb_per_gal = fuel_density_lb_per_gal
+
+    aircraft = SimpleNamespace(
+        tail_number="N123AB",
+        model="172",
+        nickname="Old Bird",
+        manufacturer=None,
+    )
+
+    # Create stations in non-canonical order to verify sorting by station_type_order then display_order.
+    # Expected canonical order: FRONT_SEATS (0), REAR_SEATS (1), BAGGAGE (3), FUEL (5)
+    stations_unordered = [
+        # FUEL station (type_order=5, display_order=1) -- inserted first
+        _FakeStation(
+            name="Aux Tank",
+            station_type=StationTypeEnum.FUEL,
+            display_order=1,
+            active=True,
+            default_arm_in=D("95"),
+            maximum_volume_gal=D("15"),
+            fuel_density_lb_per_gal=D("6.0"),
+        ),
+        # BAGGAGE station (type_order=3, display_order=0)
+        _FakeStation(
+            name="Baggage Area",
+            station_type=StationTypeEnum.BAGGAGE,
+            display_order=0,
+            active=True,
+            default_arm_in=D("110"),
+            maximum_volume_gal=None,
+            fuel_density_lb_per_gal=None,
+        ),
+        # FRONT_SEATS (type_order=0, display_order=0) -- inserted last
+        _FakeStation(
+            name="Front Seats",
+            station_type=StationTypeEnum.FRONT_SEATS,
+            display_order=0,
+            active=True,
+            default_arm_in=D("89"),
+            maximum_volume_gal=None,
+            fuel_density_lb_per_gal=None,
+        ),
+        # REAR_SEATS (type_order=1, display_order=1) -- should sort between front and baggage
+        _FakeStation(
+            name="Rear Seats",
+            station_type=StationTypeEnum.REAR_SEATS,
+            display_order=1,
+            active=True,
+            default_arm_in=D("105"),
+            maximum_volume_gal=None,
+            fuel_density_lb_per_gal=None,
+        ),
+        # FUEL station (type_order=5, display_order=0) with None optional fields
+        _FakeStation(
+            name="Main Tank",
+            station_type=StationTypeEnum.FUEL,
+            display_order=0,
+            active=True,
+            default_arm_in=D("75"),
+            maximum_volume_gal=D("40"),
+            fuel_density_lb_per_gal=D("6.0"),
+        ),
+        # Inactive FUEL station -- should be excluded
+        _FakeStation(
+            name="Empty Tank",
+            station_type=StationTypeEnum.FUEL,
+            display_order=2,
+            active=False,
+            default_arm_in=D("90"),
+            maximum_volume_gal=D("10"),
+            fuel_density_lb_per_gal=D("6.0"),
+        ),
+    ]
+
+    # Create envelope rows in non-sorted order
+    class _FakeEnvelopeRow:
+        def __init__(self, weight_lb, forward_cg_limit_in, aft_cg_limit_in):
+            self.weight_lb = weight_lb
+            self.forward_cg_limit_in = forward_cg_limit_in
+            self.aft_cg_limit_in = aft_cg_limit_in
+
+    envelope_rows_unordered = [
+        _FakeEnvelopeRow(D("2525"), D("79.9"), D("85.7")),
+        _FakeEnvelopeRow(D("2265"), D("76.5"), D("85.7")),
+        _FakeEnvelopeRow(D("2775"), D("83.2"), D("85.1")),
+    ]
+
+    revision = SimpleNamespace(
+        stations=stations_unordered,
+        envelope_rows=envelope_rows_unordered,
+        basic_empty_weight_lb=D("1500"),
+        basic_empty_cg_in=D("39"),
+        basic_empty_moment_lb_in=D("58500"),
+        max_ramp_weight_lb=None,
+        max_takeoff_weight_lb=D("2550"),
+        max_landing_weight_lb=None,
+    )
+
+    data = aircraft_update.build_revision_summary_data(aircraft, revision)
+
+    # Verify aircraft-level data
+    assert data["tail_number"] == "N123AB"
+    assert data["nickname"] == "Old Bird"
+    assert data["basic_empty_weight_lb"] == "1500"
+    assert data["basic_empty_cg_in"] == "39"
+    assert data["max_ramp_weight_lb"] is None
+    assert data["max_takeoff_weight_lb"] == "2550"
+
+    # Verify stations are sorted by station_type_order then display_order, and inactive is excluded.
+    # Expected order: FRONT_SEATS(0,0), REAR_SEATS(1,1), BAGGAGE(3,0), FUEL(5,0), FUEL(5,1)
+    # The inactive station (FUEL, display_order=2) should not appear.
+    assert len(data["stations"]) == 5
+    station_names_in_order = [s["name"] for s in data["stations"]]
+    assert station_names_in_order == [
+        "Front Seats",
+        "Rear Seats",
+        "Baggage Area",
+        "Main Tank",
+        "Aux Tank",
+    ]
+
+    # Verify optional fields for fuel stations are passed through compact_decimal correctly
+    main_tank = data["stations"][3]
+    assert main_tank["name"] == "Main Tank"
+    assert main_tank["maximum_volume_gal"] == "40"
+    assert main_tank["fuel_density_lb_per_gal"] == "6"
+
+    aux_tank = data["stations"][4]
+    assert aux_tank["name"] == "Aux Tank"
+    assert aux_tank["maximum_volume_gal"] == "15"
+    assert aux_tank["fuel_density_lb_per_gal"] == "6"
+
+    # Verify non-fuel stations have None for optional fields
+    baggage = data["stations"][2]
+    assert baggage["name"] == "Baggage Area"
+    assert baggage["maximum_volume_gal"] is None
+    assert baggage["fuel_density_lb_per_gal"] is None
+
+    # Verify envelope rows are sorted by weight_lb ascending
+    assert len(data["envelope_rows"]) == 3
+    envelope_weights = [D(r["weight_lb"]) for r in data["envelope_rows"]]
+    assert envelope_weights == [D("2265"), D("2525"), D("2775")]
+
+    # Verify CG limit values are compact_decimal'd
+    assert data["envelope_rows"][0] == {
+        "weight_lb": "2265",
+        "forward_cg_limit_in": "76.5",
+        "aft_cg_limit_in": "85.7",
+    }
+    assert data["envelope_rows"][1] == {
+        "weight_lb": "2525",
+        "forward_cg_limit_in": "79.9",
+        "aft_cg_limit_in": "85.7",
+    }
+    assert data["envelope_rows"][2] == {
+        "weight_lb": "2775",
+        "forward_cg_limit_in": "83.2",
+        "aft_cg_limit_in": "85.1",
+    }

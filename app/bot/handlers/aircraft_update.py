@@ -46,20 +46,7 @@ async def update_aircraft_prompt(
     )
 
 
-@router.callback_query(F.data.startswith("update:"))
-async def update_aircraft_chosen(
-    callback: CallbackQuery, state: FSMContext, user: User, aircraft_service: AircraftService
-) -> None:
-    aircraft_id = int(callback.data.split(":")[1])
-    aircraft = await aircraft_service.get_aircraft(user.id, aircraft_id)
-    if aircraft is None or aircraft.active_revision_id is None:
-        await callback.answer()
-        return
-    revision = await aircraft_service.get_revision_for_user(user.id, aircraft.active_revision_id)
-    if revision is None:
-        await callback.answer()
-        return
-
+def build_revision_summary_data(aircraft, revision) -> dict:
     revision_stations = sorted(
         (station for station in revision.stations if station.active),
         key=lambda station: (
@@ -89,32 +76,52 @@ async def update_aircraft_chosen(
         }
         for r in sorted(revision.envelope_rows, key=lambda r: r.weight_lb)
     ]
+    return {
+        "tail_number": aircraft.tail_number,
+        "model": aircraft.model,
+        "nickname": aircraft.nickname,
+        "manufacturer": aircraft.manufacturer,
+        "basic_empty_weight_lb": compact_decimal(revision.basic_empty_weight_lb),
+        "basic_empty_cg_in": compact_decimal(revision.basic_empty_cg_in),
+        "basic_empty_moment_lb_in": compact_decimal(revision.basic_empty_moment_lb_in),
+        "max_ramp_weight_lb": compact_decimal(revision.max_ramp_weight_lb)
+        if revision.max_ramp_weight_lb is not None
+        else None,
+        "max_takeoff_weight_lb": compact_decimal(revision.max_takeoff_weight_lb),
+        "max_landing_weight_lb": compact_decimal(revision.max_landing_weight_lb)
+        if revision.max_landing_weight_lb is not None
+        else None,
+        "stations": stations,
+        "envelope_rows": envelope_rows,
+    }
+
+
+@router.callback_query(F.data.startswith("update:"))
+async def update_aircraft_chosen(
+    callback: CallbackQuery, state: FSMContext, user: User, aircraft_service: AircraftService
+) -> None:
+    aircraft_id = int(callback.data.split(":")[1])
+    aircraft = await aircraft_service.get_aircraft(user.id, aircraft_id)
+    if aircraft is None or aircraft.active_revision_id is None:
+        await callback.answer()
+        return
+    revision = await aircraft_service.get_revision_for_user(user.id, aircraft.active_revision_id)
+    if revision is None:
+        await callback.answer()
+        return
+
+    summary_data = build_revision_summary_data(aircraft, revision)
 
     await state.clear()
     await state.update_data(
         update_mode=True,
         aircraft_id=aircraft.id,
-        tail_number=aircraft.tail_number,
-        model=aircraft.model,
-        nickname=aircraft.nickname,
-        manufacturer=aircraft.manufacturer,
-        basic_empty_weight_lb=compact_decimal(revision.basic_empty_weight_lb),
-        basic_empty_cg_in=compact_decimal(revision.basic_empty_cg_in),
-        basic_empty_moment_lb_in=compact_decimal(revision.basic_empty_moment_lb_in),
-        max_ramp_weight_lb=compact_decimal(revision.max_ramp_weight_lb)
-        if revision.max_ramp_weight_lb is not None
-        else None,
-        max_takeoff_weight_lb=compact_decimal(revision.max_takeoff_weight_lb),
-        max_landing_weight_lb=compact_decimal(revision.max_landing_weight_lb)
-        if revision.max_landing_weight_lb is not None
-        else None,
         known_useful_load_lb=compact_decimal(revision.known_useful_load_lb)
         if revision.known_useful_load_lb is not None
         else None,
         source_document_name=revision.source_document_name,
         source_document_date=revision.source_document_date.isoformat() if revision.source_document_date else None,
-        stations=stations,
-        envelope_rows=envelope_rows,
+        **summary_data,
     )
     await callback.message.answer(
         t(
