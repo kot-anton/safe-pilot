@@ -31,11 +31,13 @@ This reuses two things that already exist:
 - Reuses existing keys: `no_aircraft_yet`, `select_aircraft_prompt`, `aircraft_not_found`.
 
 **Keyboard** (`app/bot/keyboards/common.py`):
-- `aircraft_submenu_keyboard` gains the new button, paired with "My Aircrafts" in its own row:
+- `aircraft_submenu_keyboard` gains the new button as a 6th option, in its own row after "My
+  Aircrafts":
   ```
   [Select Aircraft, Add Aircraft]
   [Edit Aircraft, Archive Aircraft]
-  [My Aircrafts, Download Data]
+  [My Aircrafts]
+  [Download Data]
   [« Main menu]
   ```
 
