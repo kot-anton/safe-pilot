@@ -430,13 +430,9 @@ async def _render_fuel_prompt(message: Message, state: FSMContext, user: User, i
             "capacity": fmt(capacity, " gal"),
         }
     else:
-        keyboard = skip_cancel_keyboard(lang)
+        keyboard = skip_cancel_keyboard(lang, show_skip=False)
         starting = Decimal(data.get("fuel", {}).get(station_id, {}).get("starting_gal", "0"))
         kwargs = {"station": name, "available": fmt(starting, " gal")}
-        if len(fuel_ids) > 1:
-            kwargs["multi_tank_note"] = t("ask_fuel_enroute_multi_tank_note", lang)
-        else:
-            kwargs["multi_tank_note"] = ""
     await message.answer(t(text_key, lang, **kwargs), reply_markup=keyboard)
 
 
@@ -705,28 +701,6 @@ async def got_fuel_enroute(
         aircraft_service,
         flight_service,
         landing_fuel_provided=True,
-    )
-
-
-@router.callback_query(FlightWizard.fuel_enroute, F.data == "wizard:skip")
-async def skip_fuel_enroute(
-    callback: CallbackQuery,
-    state: FSMContext,
-    user: User,
-    aircraft_service: AircraftService,
-    flight_service: FlightService,
-) -> None:
-    await callback.answer()
-    await _store_fuel_field_and_advance(
-        callback.message,
-        state,
-        user,
-        "enroute",
-        "enroute_burn_gal",
-        "0",
-        aircraft_service,
-        flight_service,
-        landing_fuel_provided=False,
     )
 
 

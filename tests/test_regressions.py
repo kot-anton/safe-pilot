@@ -726,34 +726,30 @@ async def test_advanced_flow_rejects_burn_above_starting_fuel_immediately():
     assert any("cannot exceed starting fuel (20 gal)" in text for text, _ in message.answers)
 
 
-async def test_fuel_enroute_prompt_warns_about_landing_only_with_multiple_tanks():
-    """Skipping enroute burn on one tank cancels landing evaluation for every tank (the domain
-    rule requires all tanks to have a burn answer), not just the skipped one. The prompt should
-    say so, but only when there's more than one tank -- the common single-tank case does not
-    need the extra sentence."""
+async def test_fuel_enroute_prompt_has_no_skip_button():
+    """The enroute-burn prompt always requires a typed answer -- there is no skip shortcut,
+    since skipping a tank silently disabled landing evaluation for every tank, which was
+    confusing to pilots trying to verify their full takeoff/landing setup."""
     user = SimpleNamespace(language="en")
 
-    single_tank_state = _FakeState(
-        {
-            "fuel_station_ids": ["fuel"],
-            "fuel_station_names": {"fuel": "Fuel Tank"},
-            "fuel": {"fuel": {"starting_gal": "20"}},
-        }
-    )
-    single_message = _FakeMessage()
-    await flight_calculation._render_fuel_prompt(single_message, single_tank_state, user, 0, "enroute")
-    assert "landing will not be evaluated" not in single_message.answers[-1][0]
-
-    multi_tank_state = _FakeState(
+    state = _FakeState(
         {
             "fuel_station_ids": ["main", "aux"],
             "fuel_station_names": {"main": "Main", "aux": "Aux"},
             "fuel": {"main": {"starting_gal": "20"}, "aux": {"starting_gal": "10"}},
         }
     )
-    multi_message = _FakeMessage()
-    await flight_calculation._render_fuel_prompt(multi_message, multi_tank_state, user, 0, "enroute")
-    assert "landing will not be evaluated for any tanks" in multi_message.answers[-1][0]
+    message = _FakeMessage()
+    await flight_calculation._render_fuel_prompt(message, state, user, 0, "enroute")
+
+    text, kwargs = message.answers[-1]
+    assert "landing will not be evaluated" not in text
+    callbacks = [
+        button.callback_data
+        for row in kwargs["reply_markup"].inline_keyboard
+        for button in row
+    ]
+    assert "wizard:skip" not in callbacks
 
 
 async def test_last_advanced_input_skips_quick_and_malformed_history():
