@@ -12,6 +12,7 @@ STRINGS: dict[str, str] = {
     'menu_select_aircraft': '🔁 Change Aircraft',
     'menu_update_aircraft': '⚙️ Edit Aircraft',
     'menu_archive_aircraft': '🗑 Archive Aircraft',
+    'menu_download_data': '📥 Download Data',
     'menu_new_calc': '🧮 Calculate',
     'menu_aircraft_submenu': '🛩 Aircraft',
     'menu_more_submenu': '⚙️ More',
