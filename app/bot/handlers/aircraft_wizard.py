@@ -122,11 +122,25 @@ def _ordered_station_items(stations: list[dict]) -> list[tuple[int, dict]]:
 
 
 async def render_tail_number(message: Message, state: FSMContext, user: User) -> None:
-    await message.answer(t("ask_tail_number", _lang(user)), reply_markup=cancel_only_keyboard(_lang(user), show_back=False))
+    lang = _lang(user)
+    data = await state.get_data()
+    await message.answer(
+        t("ask_tail_number", lang) + _current_suffix(data, "tail_number", "", lang),
+        reply_markup=keep_cancel_keyboard(lang, show_keep=_is_update(data), show_back=False),
+    )
 
 
 async def render_nickname(message: Message, state: FSMContext, user: User) -> None:
-    await message.answer(t("ask_nickname", _lang(user)), reply_markup=skip_cancel_keyboard(_lang(user)))
+    lang = _lang(user)
+    data = await state.get_data()
+    await message.answer(
+        t("ask_nickname", lang) + _current_suffix(data, "nickname", "", lang),
+        reply_markup=skip_cancel_keyboard(
+            lang,
+            show_keep=_show_keep(data, "nickname"),
+            show_skip=_show_skip(data, "nickname"),
+        ),
+    )
 
 
 async def render_empty_weight(message: Message, state: FSMContext, user: User) -> None:
@@ -529,6 +543,12 @@ async def got_tail_number(message: Message, state: FSMContext, user: User) -> No
         return
     await state.update_data(tail_number=tail_number)
     await goto(message, state, user, AircraftWizard.nickname, render_nickname)
+
+
+@router.callback_query(AircraftWizard.tail_number, F.data == "wizard:keep")
+async def keep_tail_number(callback: CallbackQuery, state: FSMContext, user: User) -> None:
+    await goto(callback.message, state, user, AircraftWizard.nickname, render_nickname)
+    await callback.answer()
 
 
 @router.message(AircraftWizard.nickname, F.text)
@@ -1467,7 +1487,9 @@ async def review_confirm(
                 await callback.answer(t("aircraft_not_found", lang), show_alert=True)
                 await state.clear()
                 return
-            await aircraft_service.update_aircraft(aircraft, draft)
+            await aircraft_service.update_aircraft(
+                aircraft, data["tail_number"], data.get("nickname"), draft
+            )
         else:
             await aircraft_service.create_aircraft(
                 user.id,

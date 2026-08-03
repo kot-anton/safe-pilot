@@ -11,7 +11,7 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 
-from app.bot.handlers.aircraft_wizard import render_empty_weight
+from app.bot.handlers.aircraft_wizard import render_tail_number
 from app.bot.handlers.wizard_nav import goto
 from app.bot.keyboards.common import aircraft_list_keyboard
 from app.bot.states.aircraft_wizard import AircraftWizard
@@ -124,5 +124,5 @@ async def update_aircraft_chosen(
         ),
         reply_markup=ReplyKeyboardRemove(),
     )
-    await goto(callback.message, state, user, AircraftWizard.empty_weight, render_empty_weight, record_history=False)
+    await goto(callback.message, state, user, AircraftWizard.tail_number, render_tail_number, record_history=False)
     await callback.answer()
