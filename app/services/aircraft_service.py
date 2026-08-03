@@ -226,8 +226,16 @@ class AircraftService:
         await self.repo.set_selected_aircraft_id(user_id, aircraft.id)
         return aircraft
 
-    async def update_aircraft(self, aircraft: Aircraft, draft: AircraftRevisionDraft) -> AircraftRevision:
+    async def update_aircraft(
+        self,
+        aircraft: Aircraft,
+        tail_number: str,
+        nickname: str | None,
+        draft: AircraftRevisionDraft,
+    ) -> AircraftRevision:
+        validate_aircraft_identity(tail_number, aircraft.model, nickname, aircraft.manufacturer)
         validate_revision_draft(draft)
+        await self.repo.update_identity(aircraft, tail_number=tail_number, nickname=nickname)
         return await self._add_revision(aircraft, draft)
 
     async def _add_revision(self, aircraft: Aircraft, draft: AircraftRevisionDraft) -> AircraftRevision:

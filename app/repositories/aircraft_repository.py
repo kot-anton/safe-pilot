@@ -75,6 +75,13 @@ class AircraftRepository:
         await self.session.flush()
         return aircraft
 
+    async def update_identity(
+        self, aircraft: Aircraft, *, tail_number: str, nickname: str | None
+    ) -> None:
+        aircraft.tail_number = tail_number
+        aircraft.nickname = nickname
+        await self.session.flush()
+
     async def next_revision_number(self, aircraft_id: int) -> int:
         result = await self.session.execute(
             select(AircraftRevision.revision_number)

@@ -124,7 +124,9 @@ async def test_aircraft_revision_history(session_factory):
         first_revision_id = aircraft.active_revision_id
 
         updated_draft = dataclasses.replace(_draft(), notes="updated empty weight after annual")
-        new_revision = await service.update_aircraft(aircraft, updated_draft)
+        new_revision = await service.update_aircraft(
+            aircraft, aircraft.tail_number, aircraft.nickname, updated_draft
+        )
         await session.commit()
 
         assert new_revision.revision_number == 2
@@ -134,6 +136,29 @@ async def test_aircraft_revision_history(session_factory):
         old_revision = await repo.get_revision(user.id, first_revision_id)
         assert old_revision is not None
         assert old_revision.revision_number == 1  # historical revision remains untouched
+
+
+async def test_update_aircraft_can_rename_tail_number_and_nickname(session_factory):
+    """A pilot who re-registers an aircraft under a new tail number, or just wants a nicer
+    nickname, should not have to delete and recreate the whole profile to do it."""
+    factory, _ = session_factory
+    async with factory() as session:
+        repo = AircraftRepository(session)
+        service = AircraftService(repo)
+
+        user = await service.get_or_create_user(telegram_user_id=888)
+        aircraft = await service.create_aircraft(user.id, "N333CC", "172", "Old Nick", None, _draft())
+        await session.commit()
+
+        await service.update_aircraft(aircraft, "N999ZZ", "New Nick", _draft())
+        await session.commit()
+
+        assert aircraft.tail_number == "N999ZZ"
+        assert aircraft.nickname == "New Nick"
+
+        refetched = await service.get_aircraft(user.id, aircraft.id)
+        assert refetched.tail_number == "N999ZZ"
+        assert refetched.nickname == "New Nick"
 
 
 async def test_flight_calculation_stays_linked_to_its_revision(session_factory):
@@ -159,7 +184,7 @@ async def test_flight_calculation_stays_linked_to_its_revision(session_factory):
         await session.commit()
 
         # create a new revision; old flight calculation must still point at revision 1
-        await service.update_aircraft(aircraft, _draft())
+        await service.update_aircraft(aircraft, aircraft.tail_number, aircraft.nickname, _draft())
         await session.commit()
 
         history = await flight_repo.list_for_user(user.id)
@@ -251,7 +276,7 @@ async def test_archive_create_calculate_edit_and_recalculate_lifecycle(session_f
             basic_empty_cg_in=D("39"),
         )
         updated_revision = await aircraft_service.update_aircraft(
-            aircraft, updated_draft
+            aircraft, aircraft.tail_number, aircraft.nickname, updated_draft
         )
         await session.commit()
         assert updated_revision.revision_number == 2

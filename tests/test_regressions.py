@@ -2,13 +2,14 @@ import json
 from decimal import Decimal as D
 from types import SimpleNamespace
 
-from app.bot.handlers import aircraft_wizard, flight_calculation, quick_calculate
+from app.bot.handlers import aircraft_update, aircraft_wizard, flight_calculation, quick_calculate
 from app.bot.handlers._common import recommendation_text
 from app.bot.handlers.aircraft_wizard import _apply_station_type_change, got_station_edit_arm
 from app.bot.handlers.flight_calculation import _history_summary
 from app.bot.states.aircraft_wizard import AircraftWizard
 from app.bot.states.flight_wizard import FlightWizard
 from app.bot.states.quick_calc_wizard import QuickCalcWizard
+from app.database.models import StationTypeEnum
 from app.domain.envelope import CGCheckResult, LimitStatus
 from app.domain.models import AircraftProfile, StationProfile, StationType
 from app.domain.models import (
@@ -1042,3 +1043,97 @@ def test_recommendation_text_handles_quick_recommendations_without_note():
     ]
     text = recommendation_text(recs, "en")
     assert "Reduce total usable fuel" in text
+
+
+async def test_update_mode_offers_keep_current_for_tail_number_and_nickname():
+    """The Edit Aircraft flow revisits tail number and nickname too -- a pilot who re-registered
+    under a new N-number, or wants a different nickname, can retype them instead of recreating
+    the whole profile. Keep Current is offered for both since the aircraft already has values."""
+    user = SimpleNamespace(language="en")
+    state = _FakeState({"update_mode": True, "tail_number": "N123AB", "nickname": "Old Bird"})
+
+    tail_message = _FakeMessage()
+    await aircraft_wizard.render_tail_number(tail_message, state, user)
+    tail_text, tail_kwargs = tail_message.answers[-1]
+    assert "Current: N123AB" in tail_text
+    tail_callbacks = [
+        button.callback_data
+        for row in tail_kwargs["reply_markup"].inline_keyboard
+        for button in row
+    ]
+    assert "wizard:keep" in tail_callbacks
+
+    nickname_message = _FakeMessage()
+    await aircraft_wizard.render_nickname(nickname_message, state, user)
+    nick_text, nick_kwargs = nickname_message.answers[-1]
+    assert "Current: Old Bird" in nick_text
+    nick_callbacks = [
+        button.callback_data
+        for row in nick_kwargs["reply_markup"].inline_keyboard
+        for button in row
+    ]
+    assert "wizard:keep" in nick_callbacks
+    assert "wizard:skip" not in nick_callbacks
+
+    keep_cb = _FakeCallback(_FakeMessage())
+    await aircraft_wizard.keep_tail_number(keep_cb, state, user)
+    assert state.current_state == AircraftWizard.nickname
+    assert state.data["tail_number"] == "N123AB"
+
+
+async def test_update_aircraft_chosen_starts_at_tail_number():
+    """Regression: the Edit Aircraft entry point used to jump straight to empty weight,
+    skipping tail number and nickname entirely -- making them impossible to change without
+    recreating the aircraft."""
+
+    class _FakeStation:
+        def __init__(self):
+            self.name = "Front Seats"
+            self.station_type = StationTypeEnum.FRONT_SEATS
+            self.display_order = 0
+            self.active = True
+            self.default_arm_in = D("0")
+            self.maximum_volume_gal = None
+            self.fuel_density_lb_per_gal = None
+
+    aircraft = SimpleNamespace(
+        id=1,
+        tail_number="N123AB",
+        model="172",
+        nickname="Old Bird",
+        manufacturer=None,
+        active_revision_id=9,
+    )
+    revision = SimpleNamespace(
+        stations=[_FakeStation()],
+        envelope_rows=[],
+        basic_empty_weight_lb=D("1500"),
+        basic_empty_cg_in=D("39"),
+        basic_empty_moment_lb_in=D("58500"),
+        max_ramp_weight_lb=None,
+        max_takeoff_weight_lb=D("2550"),
+        max_landing_weight_lb=None,
+        known_useful_load_lb=None,
+        source_document_name=None,
+        source_document_date=None,
+    )
+
+    class FakeAircraftService:
+        async def get_aircraft(self, user_id, aircraft_id):
+            return aircraft
+
+        async def get_revision_for_user(self, user_id, revision_id):
+            return revision
+
+    user = SimpleNamespace(id=1, language="en")
+    state = _FakeState({})
+    callback = _FakeCallback(_FakeMessage())
+    callback.data = "update:1"
+
+    await aircraft_update.update_aircraft_chosen(
+        callback, state, user, aircraft_service=FakeAircraftService()
+    )
+
+    assert state.current_state == AircraftWizard.tail_number
+    assert state.data["tail_number"] == "N123AB"
+    assert state.data["nickname"] == "Old Bird"
