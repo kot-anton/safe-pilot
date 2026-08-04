@@ -23,7 +23,12 @@ def test_recommendation_reduces_fuel_for_overweight():
     result = calculate(profile, calc_input)
     assert result.overall_status == LimitStatus.OUT_OF_LIMITS
 
-    recs = generate_recommendations(profile, calc_input)
+    # max_results is raised here because, for this fixture, the fuel+load combination search
+    # (Task 5) finds a combo (9.2 gal fuel + 55 lb seat-load, ~110.20 lb weight-equivalent) that
+    # very narrowly edges out the standalone Reduce Fuel fix (~110.40 lb) on the tiebreak -- a
+    # legitimate near-tie, not a units bug. This test verifies the standalone recommendation
+    # itself is still found and well-formed, not that it wins the default top-N ranking.
+    recs = generate_recommendations(profile, calc_input, max_results=10)
     fuel_recs = [r for r in recs if r.kind == RecommendationKind.REDUCE_FUEL]
     assert fuel_recs, "expected at least one fuel-reduction recommendation"
 
@@ -366,3 +371,411 @@ def test_recommendations_preserve_category_priority_over_raw_delta():
     candidates = [fuel, move]
     candidates.sort(key=lambda r: (_CATEGORY_PRIORITY[r.kind], r.delta_lb))
     assert candidates[0] is move
+
+
+def test_category_priority_puts_reduce_fuel_last():
+    """Removing fuel reduces a flight's safety margin, so it must be the least-preferred
+    single-category fix -- ranked below every other adjustment, including adding fuel."""
+    from app.domain.recommendations import _CATEGORY_PRIORITY, RecommendationKind
+
+    order = [
+        RecommendationKind.MOVE_LOAD,
+        RecommendationKind.REDUCE_BAGGAGE,
+        RecommendationKind.ADD_BAGGAGE,
+        RecommendationKind.SHIFT_FUEL,
+        RecommendationKind.ADD_FUEL,
+        RecommendationKind.REDUCE_FUEL,
+    ]
+    priorities = [_CATEGORY_PRIORITY[kind] for kind in order]
+    assert priorities == sorted(priorities), (
+        f"expected strictly increasing priority in this order, got {priorities}"
+    )
+
+
+def test_reduce_seat_load_fixes_overweight_with_default_front_floor():
+    """Default floor (170 lb) doesn't block the fix in this scenario: the minimal working
+    reduction lands well above it (front seat drops from 400 lb to 290 lb)."""
+    profile = make_test_profile()
+    calc_input = CalculationInput(
+        loads=[
+            LoadItemInput(station_id="front_seats", weight_lb=D("400")),
+            LoadItemInput(station_id="rear_seats", weight_lb=D("400")),
+            LoadItemInput(station_id="baggage_1", weight_lb=D("0")),
+        ],
+        fuel=[
+            FuelStationInput(station_id="main_fuel", starting_gal=D("40")),
+            FuelStationInput(station_id="aux_fuel", starting_gal=D("20")),
+        ],
+    )
+    result = calculate(profile, calc_input)
+    assert result.overall_status == LimitStatus.OUT_OF_LIMITS
+
+    recs = generate_recommendations(profile, calc_input)
+    front_recs = [
+        r for r in recs
+        if r.kind == RecommendationKind.REDUCE_SEAT_LOAD and r.station_id == "front_seats"
+    ]
+    assert front_recs, "expected a Front Seats reduce-load recommendation"
+    rec = front_recs[0]
+    assert rec.delta_lb == D("110")
+
+    fixed_input = CalculationInput(
+        loads=[
+            LoadItemInput(station_id="front_seats", weight_lb=D("400") - rec.delta_lb),
+            LoadItemInput(station_id="rear_seats", weight_lb=D("400")),
+            LoadItemInput(station_id="baggage_1", weight_lb=D("0")),
+        ],
+        fuel=calc_input.fuel,
+    )
+    fixed_result = calculate(profile, fixed_input)
+    assert fixed_result.overall_status != LimitStatus.OUT_OF_LIMITS
+    assert "Remove" in rec.describe()
+
+
+def test_reduce_seat_load_never_proposes_below_front_floor(monkeypatch):
+    """If the configured floor exceeds what a fix would require, no Front Seats suggestion is
+    made at all -- the search must never suggest a target below the floor. Other categories
+    (e.g. Reduce Fuel) still cover the pilot in that case."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "min_front_seat_weight_lb", 350.0)
+    profile = make_test_profile()
+    calc_input = CalculationInput(
+        loads=[
+            LoadItemInput(station_id="front_seats", weight_lb=D("400")),
+            LoadItemInput(station_id="rear_seats", weight_lb=D("400")),
+            LoadItemInput(station_id="baggage_1", weight_lb=D("0")),
+        ],
+        fuel=[
+            FuelStationInput(station_id="main_fuel", starting_gal=D("40")),
+            FuelStationInput(station_id="aux_fuel", starting_gal=D("20")),
+        ],
+    )
+    recs = generate_recommendations(profile, calc_input)
+    front_recs = [
+        r for r in recs
+        if r.kind == RecommendationKind.REDUCE_SEAT_LOAD and r.station_id == "front_seats"
+    ]
+    assert not front_recs, "fixing this overweight condition requires going below the floor"
+    assert recs, "the pilot must still see other recommendations (e.g. Reduce Fuel)"
+
+
+def test_reduce_seat_load_allows_rear_seat_below_front_floor():
+    """Rear Seats has no minimum -- it can be recommended down to a level that would be
+    disallowed for Front Seats, proving the floor is asymmetric and per-station-type."""
+    from app.domain.envelope import CGEnvelope, EnvelopeRow
+    from app.domain.models import AircraftProfile, StationProfile, StationType
+
+    profile = AircraftProfile(
+        tail_number="N-SEAT",
+        revision_number=1,
+        basic_empty_weight_lb=D("1000"),
+        basic_empty_moment_lb_in=D("50000"),  # cg 50.0
+        max_takeoff_weight_lb=D("2000"),
+        stations=[
+            StationProfile(
+                station_id="front", name="Front Seats", station_type=StationType.FRONT_SEATS,
+                default_arm_in=D("30"),
+            ),
+            StationProfile(
+                station_id="rear", name="Rear Seats", station_type=StationType.REAR_SEATS,
+                default_arm_in=D("150"),
+            ),
+        ],
+        envelope=CGEnvelope(
+            [EnvelopeRow(D("1200"), D("40"), D("55")), EnvelopeRow(D("1600"), D("40"), D("55"))]
+        ),
+    )
+    calc_input = CalculationInput(
+        loads=[
+            LoadItemInput(station_id="front", weight_lb=D("170")),
+            LoadItemInput(station_id="rear", weight_lb=D("300")),
+        ],
+        fuel=[],
+    )
+    result = calculate(profile, calc_input)
+    assert result.overall_status == LimitStatus.OUT_OF_LIMITS  # too far aft
+
+    recs = generate_recommendations(profile, calc_input)
+    rear_recs = [
+        r for r in recs if r.kind == RecommendationKind.REDUCE_SEAT_LOAD and r.station_id == "rear"
+    ]
+    assert rear_recs, "expected a Rear Seats reduce-load recommendation"
+    rec = rear_recs[0]
+    assert rec.delta_lb == D("203")
+    remaining = D("300") - rec.delta_lb
+    assert remaining == D("97")  # below the 170 lb Front Seats floor -- proves no floor on Rear
+
+    fixed_input = CalculationInput(
+        loads=[
+            LoadItemInput(station_id="front", weight_lb=D("170")),
+            LoadItemInput(station_id="rear", weight_lb=remaining),
+        ],
+        fuel=[],
+    )
+    fixed_result = calculate(profile, fixed_input)
+    assert fixed_result.overall_status != LimitStatus.OUT_OF_LIMITS
+
+
+def test_move_load_allows_rear_seats_to_baggage():
+    """Rear Seats and Baggage can now trade weight directly (e.g. a loose item relocated from
+    the rear seat area to the baggage compartment) -- previously these were disjoint groups."""
+    from app.domain.envelope import CGEnvelope, EnvelopeRow
+    from app.domain.models import AircraftProfile, StationProfile, StationType
+
+    profile = AircraftProfile(
+        tail_number="N-RB",
+        revision_number=1,
+        basic_empty_weight_lb=D("1000"),
+        basic_empty_moment_lb_in=D("40000"),
+        max_takeoff_weight_lb=D("2000"),
+        stations=[
+            StationProfile(
+                station_id="rear", name="Rear Seats", station_type=StationType.REAR_SEATS,
+                default_arm_in=D("80"),
+            ),
+            StationProfile(
+                station_id="bag", name="Baggage", station_type=StationType.BAGGAGE,
+                default_arm_in=D("20"),
+            ),
+        ],
+        envelope=CGEnvelope(
+            [EnvelopeRow(D("1200"), D("35"), D("45")), EnvelopeRow(D("1600"), D("35"), D("45"))]
+        ),
+    )
+    calc_input = CalculationInput(
+        loads=[
+            LoadItemInput(station_id="rear", weight_lb=D("300")),
+            LoadItemInput(station_id="bag", weight_lb=D("0")),
+        ],
+        fuel=[],
+    )
+    result = calculate(profile, calc_input)
+    assert result.overall_status == LimitStatus.OUT_OF_LIMITS  # too far aft
+
+    recs = generate_recommendations(profile, calc_input)
+    move_recs = [
+        r for r in recs
+        if r.kind == RecommendationKind.MOVE_LOAD
+        and r.station_id == "rear" and r.target_station_id == "bag"
+    ]
+    assert move_recs, "expected a Rear Seats -> Baggage move suggestion"
+    rec = move_recs[0]
+    assert rec.delta_lb == D("92")
+
+    fixed_input = CalculationInput(
+        loads=[
+            LoadItemInput(station_id="rear", weight_lb=D("300") - rec.delta_lb),
+            LoadItemInput(station_id="bag", weight_lb=rec.delta_lb),
+        ],
+        fuel=[],
+    )
+    fixed_result = calculate(profile, fixed_input)
+    assert fixed_result.overall_status != LimitStatus.OUT_OF_LIMITS
+
+
+def test_move_load_still_excludes_front_seats_from_baggage():
+    """Front Seats never trades weight with Baggage -- there's normally no loose cargo at a
+    front seat position, and a person's own bodyweight isn't something to 'move' to cargo."""
+    from app.domain.envelope import CGEnvelope, EnvelopeRow
+    from app.domain.models import AircraftProfile, StationProfile, StationType
+
+    profile = AircraftProfile(
+        tail_number="N-FB",
+        revision_number=1,
+        basic_empty_weight_lb=D("1000"),
+        basic_empty_moment_lb_in=D("40000"),
+        max_takeoff_weight_lb=D("2000"),
+        stations=[
+            StationProfile(
+                station_id="front", name="Front Seats", station_type=StationType.FRONT_SEATS,
+                default_arm_in=D("80"),
+            ),
+            StationProfile(
+                station_id="bag", name="Baggage", station_type=StationType.BAGGAGE,
+                default_arm_in=D("20"),
+            ),
+        ],
+        envelope=CGEnvelope(
+            [EnvelopeRow(D("1200"), D("35"), D("45")), EnvelopeRow(D("1600"), D("35"), D("45"))]
+        ),
+    )
+    calc_input = CalculationInput(
+        loads=[
+            LoadItemInput(station_id="front", weight_lb=D("300")),
+            LoadItemInput(station_id="bag", weight_lb=D("0")),
+        ],
+        fuel=[],
+    )
+    recs = generate_recommendations(profile, calc_input)
+    assert not any(
+        r.kind == RecommendationKind.MOVE_LOAD
+        and {r.station_id, r.target_station_id} == {"front", "bag"}
+        for r in recs
+    )
+
+
+def test_combination_recommendation_found_when_no_single_fix_is_gentler():
+    """A forward-CG problem where both Add Baggage alone (250 lb) and Add Fuel alone (41.7 gal)
+    can fix it independently -- but a combination using less of each is also possible and must
+    be offered as an extra option."""
+    from app.domain.envelope import CGEnvelope, EnvelopeRow
+    from app.domain.models import AircraftProfile, StationProfile, StationType
+
+    profile = AircraftProfile(
+        tail_number="N-COMBO",
+        revision_number=1,
+        basic_empty_weight_lb=D("1000"),
+        basic_empty_moment_lb_in=D("30000"),  # cg 30.0
+        max_takeoff_weight_lb=D("2000"),
+        stations=[
+            StationProfile(
+                station_id="front", name="Front Seats", station_type=StationType.FRONT_SEATS,
+                default_arm_in=D("10"),
+            ),
+            StationProfile(
+                station_id="bag", name="Baggage", station_type=StationType.BAGGAGE,
+                default_arm_in=D("100"),
+            ),
+            StationProfile(
+                station_id="fuel", name="Main Fuel", station_type=StationType.FUEL,
+                default_arm_in=D("100"), maximum_volume_gal=D("60"), fuel_density_lb_per_gal=D("6"),
+            ),
+        ],
+        envelope=CGEnvelope(
+            [EnvelopeRow(D("1200"), D("35"), D("50")), EnvelopeRow(D("1800"), D("35"), D("50"))]
+        ),
+    )
+    calc_input = CalculationInput(
+        loads=[
+            LoadItemInput(station_id="front", weight_lb=D("450")),
+            LoadItemInput(station_id="bag", weight_lb=D("0")),
+        ],
+        fuel=[FuelStationInput(station_id="fuel", starting_gal=D("0"))],
+    )
+    result = calculate(profile, calc_input)
+    assert result.overall_status == LimitStatus.OUT_OF_LIMITS  # too far forward
+
+    recs = generate_recommendations(profile, calc_input, allow_add_fuel=True, max_results=10)
+    combos = [r for r in recs if r.kind == RecommendationKind.COMBINATION]
+    assert combos, "expected at least one combination recommendation"
+
+    combo = combos[0]
+    assert combo.legs is not None and len(combo.legs) == 2
+    fuel_leg, load_leg = combo.legs
+    assert fuel_leg.kind == RecommendationKind.ADD_FUEL
+    assert load_leg.kind == RecommendationKind.ADD_BAGGAGE
+    # Must be gentler than at least one of the two "alone" fixes (250 lb baggage / 41.7 gal fuel).
+    assert load_leg.delta_lb < D("250") or fuel_leg.delta_gal < D("41.7")
+
+    fixed_input = CalculationInput(
+        loads=[
+            LoadItemInput(station_id="front", weight_lb=D("450")),
+            LoadItemInput(station_id="bag", weight_lb=load_leg.delta_lb),
+        ],
+        fuel=[FuelStationInput(station_id="fuel", starting_gal=fuel_leg.delta_gal)],
+    )
+    fixed_result = calculate(profile, fixed_input)
+    assert fixed_result.overall_status != LimitStatus.OUT_OF_LIMITS
+    assert " AND " in combo.describe()
+
+
+def test_combination_priority_matches_its_fuel_side_leg():
+    """A combination's priority tier must come from its fuel-side leg -- an Add-Fuel combo
+    outranks a Reduce-Fuel combo, same fuel-safety bias as standalone recommendations."""
+    from app.domain.recommendations import _CATEGORY_PRIORITY
+
+    add_fuel_leg = Recommendation(
+        kind=RecommendationKind.ADD_FUEL, station_id="f", station_name="F",
+        delta_lb=D("30"), delta_gal=D("5"),
+    )
+    reduce_fuel_leg = Recommendation(
+        kind=RecommendationKind.REDUCE_FUEL, station_id="f", station_name="F",
+        delta_lb=D("30"), delta_gal=D("5"),
+    )
+    baggage_leg = Recommendation(
+        kind=RecommendationKind.ADD_BAGGAGE, station_id="b", station_name="B", delta_lb=D("10"),
+    )
+    add_fuel_combo = Recommendation(
+        kind=RecommendationKind.COMBINATION, station_id="f", station_name="F",
+        legs=(add_fuel_leg, baggage_leg),
+    )
+    reduce_fuel_combo = Recommendation(
+        kind=RecommendationKind.COMBINATION, station_id="f", station_name="F",
+        legs=(reduce_fuel_leg, baggage_leg),
+    )
+    candidates = [reduce_fuel_combo, add_fuel_combo]
+    from app.domain.recommendations import _combination_priority
+
+    candidates.sort(key=_combination_priority)
+    assert candidates[0] is add_fuel_combo
+
+
+def test_combination_note_propagates_from_shift_fuel_leg(monkeypatch):
+    """A SHIFT_FUEL leg's fuel-system safety note must survive onto the top-level COMBINATION
+    recommendation -- describe() and the bot's rendering only look at each leg's own text /
+    the top-level `.note`, never descending into `.legs`, so without this the disclaimer would
+    be silently dropped whenever a fuel transfer is combined with a load-side fix."""
+    import app.domain.recommendations as recommendations_module
+
+    class _AcceptableResult:
+        overall_status = LimitStatus.WITHIN
+
+    monkeypatch.setattr(
+        recommendations_module, "_try_calculate", lambda profile, candidate: _AcceptableResult()
+    )
+
+    profile = make_test_profile()
+    calc_input = CalculationInput(
+        loads=[
+            LoadItemInput(station_id="front_seats", weight_lb=D("400")),
+            LoadItemInput(station_id="rear_seats", weight_lb=D("0")),
+            LoadItemInput(station_id="baggage_1", weight_lb=D("0")),
+        ],
+        fuel=[
+            FuelStationInput(station_id="main_fuel", starting_gal=D("40")),
+            FuelStationInput(station_id="aux_fuel", starting_gal=D("20")),
+        ],
+    )
+
+    fuel_note = (
+        "Use only if this transfer is permitted by the aircraft fuel-system "
+        "documents and can be performed as described."
+    )
+    fuel_leg = Recommendation(
+        kind=RecommendationKind.SHIFT_FUEL,
+        station_id="main_fuel",
+        station_name="Main Fuel",
+        target_station_id="aux_fuel",
+        target_station_name="Aux Fuel",
+        delta_gal=D("10"),
+        note=fuel_note,
+    )
+    load_leg = Recommendation(
+        kind=RecommendationKind.ADD_BAGGAGE,
+        station_id="baggage_1",
+        station_name="Baggage",
+        delta_lb=D("50"),
+    )
+
+    combos = recommendations_module._search_combinations(
+        profile, calc_input, fuel_side=[fuel_leg], load_side=[load_leg]
+    )
+    assert combos, "expected a combination to be found once _try_calculate always accepts"
+    combo = combos[0]
+    assert combo.kind == RecommendationKind.COMBINATION
+    assert combo.note == fuel_note
+    # And the leg itself must still carry the note too -- describe() reads each leg directly.
+    shift_fuel_result_leg = next(
+        leg for leg in combo.legs if leg.kind == RecommendationKind.SHIFT_FUEL
+    )
+    assert shift_fuel_result_leg.note == fuel_note
+
+
+def test_generate_recommendations_default_max_results_is_four():
+    import inspect
+
+    from app.domain.recommendations import generate_recommendations
+
+    signature = inspect.signature(generate_recommendations)
+    assert signature.parameters["max_results"].default == 4
