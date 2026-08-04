@@ -385,3 +385,128 @@ def test_category_priority_puts_reduce_fuel_last():
     assert priorities == sorted(priorities), (
         f"expected strictly increasing priority in this order, got {priorities}"
     )
+
+
+def test_reduce_seat_load_fixes_overweight_with_default_front_floor():
+    """Default floor (170 lb) doesn't block the fix in this scenario: the minimal working
+    reduction lands well above it (front seat drops from 400 lb to 290 lb)."""
+    profile = make_test_profile()
+    calc_input = CalculationInput(
+        loads=[
+            LoadItemInput(station_id="front_seats", weight_lb=D("400")),
+            LoadItemInput(station_id="rear_seats", weight_lb=D("400")),
+            LoadItemInput(station_id="baggage_1", weight_lb=D("0")),
+        ],
+        fuel=[
+            FuelStationInput(station_id="main_fuel", starting_gal=D("40")),
+            FuelStationInput(station_id="aux_fuel", starting_gal=D("20")),
+        ],
+    )
+    result = calculate(profile, calc_input)
+    assert result.overall_status == LimitStatus.OUT_OF_LIMITS
+
+    recs = generate_recommendations(profile, calc_input)
+    front_recs = [
+        r for r in recs
+        if r.kind == RecommendationKind.REDUCE_SEAT_LOAD and r.station_id == "front_seats"
+    ]
+    assert front_recs, "expected a Front Seats reduce-load recommendation"
+    rec = front_recs[0]
+    assert rec.delta_lb == D("110")
+
+    fixed_input = CalculationInput(
+        loads=[
+            LoadItemInput(station_id="front_seats", weight_lb=D("400") - rec.delta_lb),
+            LoadItemInput(station_id="rear_seats", weight_lb=D("400")),
+            LoadItemInput(station_id="baggage_1", weight_lb=D("0")),
+        ],
+        fuel=calc_input.fuel,
+    )
+    fixed_result = calculate(profile, fixed_input)
+    assert fixed_result.overall_status != LimitStatus.OUT_OF_LIMITS
+    assert "Remove" in rec.describe()
+
+
+def test_reduce_seat_load_never_proposes_below_front_floor(monkeypatch):
+    """If the configured floor exceeds what a fix would require, no Front Seats suggestion is
+    made at all -- the search must never suggest a target below the floor. Other categories
+    (e.g. Reduce Fuel) still cover the pilot in that case."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "min_front_seat_weight_lb", 350.0)
+    profile = make_test_profile()
+    calc_input = CalculationInput(
+        loads=[
+            LoadItemInput(station_id="front_seats", weight_lb=D("400")),
+            LoadItemInput(station_id="rear_seats", weight_lb=D("400")),
+            LoadItemInput(station_id="baggage_1", weight_lb=D("0")),
+        ],
+        fuel=[
+            FuelStationInput(station_id="main_fuel", starting_gal=D("40")),
+            FuelStationInput(station_id="aux_fuel", starting_gal=D("20")),
+        ],
+    )
+    recs = generate_recommendations(profile, calc_input)
+    front_recs = [
+        r for r in recs
+        if r.kind == RecommendationKind.REDUCE_SEAT_LOAD and r.station_id == "front_seats"
+    ]
+    assert not front_recs, "fixing this overweight condition requires going below the floor"
+    assert recs, "the pilot must still see other recommendations (e.g. Reduce Fuel)"
+
+
+def test_reduce_seat_load_allows_rear_seat_below_front_floor():
+    """Rear Seats has no minimum -- it can be recommended down to a level that would be
+    disallowed for Front Seats, proving the floor is asymmetric and per-station-type."""
+    from app.domain.envelope import CGEnvelope, EnvelopeRow
+    from app.domain.models import AircraftProfile, StationProfile, StationType
+
+    profile = AircraftProfile(
+        tail_number="N-SEAT",
+        revision_number=1,
+        basic_empty_weight_lb=D("1000"),
+        basic_empty_moment_lb_in=D("50000"),  # cg 50.0
+        max_takeoff_weight_lb=D("2000"),
+        stations=[
+            StationProfile(
+                station_id="front", name="Front Seats", station_type=StationType.FRONT_SEATS,
+                default_arm_in=D("30"),
+            ),
+            StationProfile(
+                station_id="rear", name="Rear Seats", station_type=StationType.REAR_SEATS,
+                default_arm_in=D("150"),
+            ),
+        ],
+        envelope=CGEnvelope(
+            [EnvelopeRow(D("1200"), D("40"), D("55")), EnvelopeRow(D("1600"), D("40"), D("55"))]
+        ),
+    )
+    calc_input = CalculationInput(
+        loads=[
+            LoadItemInput(station_id="front", weight_lb=D("170")),
+            LoadItemInput(station_id="rear", weight_lb=D("300")),
+        ],
+        fuel=[],
+    )
+    result = calculate(profile, calc_input)
+    assert result.overall_status == LimitStatus.OUT_OF_LIMITS  # too far aft
+
+    recs = generate_recommendations(profile, calc_input)
+    rear_recs = [
+        r for r in recs if r.kind == RecommendationKind.REDUCE_SEAT_LOAD and r.station_id == "rear"
+    ]
+    assert rear_recs, "expected a Rear Seats reduce-load recommendation"
+    rec = rear_recs[0]
+    assert rec.delta_lb == D("203")
+    remaining = D("300") - rec.delta_lb
+    assert remaining == D("97")  # below the 170 lb Front Seats floor -- proves no floor on Rear
+
+    fixed_input = CalculationInput(
+        loads=[
+            LoadItemInput(station_id="front", weight_lb=D("170")),
+            LoadItemInput(station_id="rear", weight_lb=remaining),
+        ],
+        fuel=[],
+    )
+    fixed_result = calculate(profile, fixed_input)
+    assert fixed_result.overall_status != LimitStatus.OUT_OF_LIMITS

@@ -14,10 +14,17 @@ from dataclasses import dataclass
 from decimal import Decimal
 from enum import Enum
 
+from app.config import settings
 from app.domain.calculator import calculate
 from app.domain.envelope import LimitStatus
 from app.domain.exceptions import DomainError
-from app.domain.models import AircraftProfile, CalculationInput, LoadItemInput, StationType
+from app.domain.models import (
+    AircraftProfile,
+    CalculationInput,
+    LoadItemInput,
+    StationProfile,
+    StationType,
+)
 from app.domain.units import compact_decimal, lb_to_kg
 
 FUEL_STEP_GAL = Decimal("0.1")
@@ -30,6 +37,7 @@ class RecommendationKind(str, Enum):
     ADD_FUEL = "ADD_FUEL"
     REDUCE_BAGGAGE = "REDUCE_BAGGAGE"
     ADD_BAGGAGE = "ADD_BAGGAGE"
+    REDUCE_SEAT_LOAD = "REDUCE_SEAT_LOAD"
     MOVE_LOAD = "MOVE_LOAD"
     SHIFT_FUEL = "SHIFT_FUEL"
 
@@ -75,7 +83,7 @@ class Recommendation:
                 else:
                     text += f" Target level: {display(self.resulting_gal)} gal."
             return text
-        if self.kind == RecommendationKind.REDUCE_BAGGAGE:
+        if self.kind in (RecommendationKind.REDUCE_BAGGAGE, RecommendationKind.REDUCE_SEAT_LOAD):
             kg = lb_to_kg(self.delta_lb)
             return (
                 f"Remove {display(self.delta_lb)} lb ({display(kg)} kg) from "
@@ -226,6 +234,48 @@ def _search_reduce_baggage(
                 results.append(
                     Recommendation(
                         kind=RecommendationKind.REDUCE_BAGGAGE,
+                        station_id=station.station_id,
+                        station_name=station.name,
+                        delta_lb=delta,
+                    )
+                )
+                break
+    return results
+
+
+_SEAT_STATION_TYPES = {StationType.FRONT_SEATS, StationType.REAR_SEATS}
+
+
+def _seat_floor_lb(station: StationProfile) -> Decimal:
+    """Front Seats always needs at least a pilot aboard; Rear Seats has no minimum."""
+    if station.station_type == StationType.FRONT_SEATS:
+        return Decimal(str(settings.min_front_seat_weight_lb))
+    return Decimal("0")
+
+
+def _search_reduce_seat_load(
+    profile: AircraftProfile, calc_input: CalculationInput
+) -> list[Recommendation]:
+    results: list[Recommendation] = []
+    for station in profile.stations:
+        if station.station_type not in _SEAT_STATION_TYPES:
+            continue
+        current = _current_load_weight(calc_input, station.station_id)
+        floor = _seat_floor_lb(station)
+        if current <= floor:
+            continue
+        steps = min(int((current - floor) / LOAD_STEP_LB), MAX_STEPS)
+        for step in range(1, steps + 1):
+            delta = LOAD_STEP_LB * step
+            target = current - delta
+            if target < floor:
+                break
+            candidate = _replace_load(calc_input, station.station_id, target)
+            result = _try_calculate(profile, candidate)
+            if result and _is_acceptable(result.overall_status):
+                results.append(
+                    Recommendation(
+                        kind=RecommendationKind.REDUCE_SEAT_LOAD,
                         station_id=station.station_id,
                         station_name=station.name,
                         delta_lb=delta,
@@ -391,11 +441,12 @@ def _search_add_fuel(
 
 _CATEGORY_PRIORITY = {
     RecommendationKind.MOVE_LOAD: 0,
-    RecommendationKind.REDUCE_BAGGAGE: 1,
-    RecommendationKind.ADD_BAGGAGE: 2,
-    RecommendationKind.SHIFT_FUEL: 3,
-    RecommendationKind.ADD_FUEL: 4,
-    RecommendationKind.REDUCE_FUEL: 5,
+    RecommendationKind.REDUCE_SEAT_LOAD: 1,
+    RecommendationKind.REDUCE_BAGGAGE: 2,
+    RecommendationKind.ADD_BAGGAGE: 3,
+    RecommendationKind.SHIFT_FUEL: 4,
+    RecommendationKind.ADD_FUEL: 5,
+    RecommendationKind.REDUCE_FUEL: 6,
 }
 
 
@@ -418,6 +469,7 @@ def generate_recommendations(
 
     candidates: list[Recommendation] = []
     candidates += _search_move_load(profile, calc_input)
+    candidates += _search_reduce_seat_load(profile, calc_input)
     candidates += _search_reduce_baggage(profile, calc_input)
     candidates += _search_add_baggage(profile, calc_input)
     candidates += _search_reduce_fuel(profile, calc_input, min_fuel_gal)
