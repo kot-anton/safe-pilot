@@ -1,6 +1,6 @@
 # Recommendation Engine Upgrade — Design
 
-**Status:** approved, ready for implementation planning
+**Status:** implemented (see `docs/superpowers/plans/2026-08-04-recommendation-engine-upgrade.md`)
 **Scope:** `app/domain/recommendations.py` (Advanced/Full Calculation recommendation solver) and its config/tests. No changes to Quick Calculation's aggregate recommender (`app/domain/quick_recommendations.py`).
 
 ## Problem
