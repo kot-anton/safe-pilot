@@ -1,6 +1,6 @@
 # Recommendation Engine Upgrade — Design
 
-**Status:** implemented (see `docs/superpowers/plans/2026-08-04-recommendation-engine-upgrade.md`)
+**Status:** implemented in `app/domain/recommendations.py`
 **Scope:** `app/domain/recommendations.py` (Advanced/Full Calculation recommendation solver) and its config/tests. No changes to Quick Calculation's aggregate recommender (`app/domain/quick_recommendations.py`).
 
 ## Problem
@@ -126,8 +126,16 @@ from scratch:
 
 **Priority** — a `COMBINATION` recommendation's priority tier is its **fuel-side leg's** tier
 from `_CATEGORY_PRIORITY` (so an Add-Fuel combo ranks in tier 5, a Reduce-Fuel combo in tier 6,
-same fuel-safety bias as single-category results). Tiebreak within a tier: total combined
-magnitude (smaller wins), same rule already used for single-category results.
+same fuel-safety bias as single-category results). Tiebreak within a tier: both legs' `delta_lb`
+(weight-equivalent, in pounds) summed together, smaller wins. This must compare like units —
+an earlier implementation summed each leg's *step-domain* magnitude instead (gallons for a fuel
+leg, pounds for a load leg), which silently added gallons to pounds and made fuel-heavy combos
+look artificially gentler than they were; this was caught in review and fixed before merge.
+
+**Safety notes** — if either leg carries a `note` (today, only a `SHIFT_FUEL` leg does, warning
+that a pilot-controlled tank-to-tank transfer may not be permitted on this aircraft), the
+`COMBINATION` recommendation's own top-level `note` is set to that leg's note, so the disclaimer
+still reaches the pilot even when the fuel transfer is only one half of a combined suggestion.
 
 ### 5. Result cap
 
@@ -157,6 +165,10 @@ New tests, mirroring the structure of existing recommendation tests:
   (and Add-Fuel combos) sort ahead of `REDUCE_FUEL`.
 - `max_results=4` (new default) surfaces a combination suggestion in the fourth slot when one is
   found and ranks within the top 4.
+- Tiebreak: a combination's two legs are compared in consistent weight-equivalent units, not
+  raw per-leg step magnitudes (regression test for the mismatched-units bug described above).
+- Safety notes: a `COMBINATION` built from a `SHIFT_FUEL` leg carries that leg's `note` up to
+  the top level, so it is never silently dropped.
 
 ## Out of scope
 

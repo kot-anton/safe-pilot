@@ -1,5 +1,8 @@
 # Download Aircraft Data — Design
 
+**Status:** implemented (merged via PR #21)
+**Scope:** `app/bot/handlers/menu.py`, `app/bot/handlers/aircraft_update.py`, `app/bot/keyboards/common.py`, `app/bot/texts/i18n.py`. Read-only feature — no domain or database changes.
+
 ## Problem
 
 Pilots enter aircraft data (weights, stations, CG envelope) once, often years before they need to
