@@ -23,7 +23,11 @@ def test_recommendation_reduces_fuel_for_overweight():
     result = calculate(profile, calc_input)
     assert result.overall_status == LimitStatus.OUT_OF_LIMITS
 
-    recs = generate_recommendations(profile, calc_input)
+    # max_results is raised here because the new fuel+load combination search (Task 5) can
+    # surface gentler COMBINATION recommendations that legitimately outrank a standalone
+    # REDUCE_FUEL within the default cutoff -- this test verifies the standalone recommendation
+    # itself is still found and well-formed, not that it wins the default top-N ranking.
+    recs = generate_recommendations(profile, calc_input, max_results=10)
     fuel_recs = [r for r in recs if r.kind == RecommendationKind.REDUCE_FUEL]
     assert fuel_recs, "expected at least one fuel-reduction recommendation"
 
@@ -608,3 +612,108 @@ def test_move_load_still_excludes_front_seats_from_baggage():
         and {r.station_id, r.target_station_id} == {"front", "bag"}
         for r in recs
     )
+
+
+def test_combination_recommendation_found_when_no_single_fix_is_gentler():
+    """A forward-CG problem where both Add Baggage alone (250 lb) and Add Fuel alone (41.7 gal)
+    can fix it independently -- but a combination using less of each is also possible and must
+    be offered as an extra option."""
+    from app.domain.envelope import CGEnvelope, EnvelopeRow
+    from app.domain.models import AircraftProfile, StationProfile, StationType
+
+    profile = AircraftProfile(
+        tail_number="N-COMBO",
+        revision_number=1,
+        basic_empty_weight_lb=D("1000"),
+        basic_empty_moment_lb_in=D("30000"),  # cg 30.0
+        max_takeoff_weight_lb=D("2000"),
+        stations=[
+            StationProfile(
+                station_id="front", name="Front Seats", station_type=StationType.FRONT_SEATS,
+                default_arm_in=D("10"),
+            ),
+            StationProfile(
+                station_id="bag", name="Baggage", station_type=StationType.BAGGAGE,
+                default_arm_in=D("100"),
+            ),
+            StationProfile(
+                station_id="fuel", name="Main Fuel", station_type=StationType.FUEL,
+                default_arm_in=D("100"), maximum_volume_gal=D("60"), fuel_density_lb_per_gal=D("6"),
+            ),
+        ],
+        envelope=CGEnvelope(
+            [EnvelopeRow(D("1200"), D("35"), D("50")), EnvelopeRow(D("1800"), D("35"), D("50"))]
+        ),
+    )
+    calc_input = CalculationInput(
+        loads=[
+            LoadItemInput(station_id="front", weight_lb=D("450")),
+            LoadItemInput(station_id="bag", weight_lb=D("0")),
+        ],
+        fuel=[FuelStationInput(station_id="fuel", starting_gal=D("0"))],
+    )
+    result = calculate(profile, calc_input)
+    assert result.overall_status == LimitStatus.OUT_OF_LIMITS  # too far forward
+
+    recs = generate_recommendations(profile, calc_input, allow_add_fuel=True, max_results=10)
+    combos = [r for r in recs if r.kind == RecommendationKind.COMBINATION]
+    assert combos, "expected at least one combination recommendation"
+
+    combo = combos[0]
+    assert combo.legs is not None and len(combo.legs) == 2
+    fuel_leg, load_leg = combo.legs
+    assert fuel_leg.kind == RecommendationKind.ADD_FUEL
+    assert load_leg.kind == RecommendationKind.ADD_BAGGAGE
+    # Must be gentler than at least one of the two "alone" fixes (250 lb baggage / 41.7 gal fuel).
+    assert load_leg.delta_lb < D("250") or fuel_leg.delta_gal < D("41.7")
+
+    fixed_input = CalculationInput(
+        loads=[
+            LoadItemInput(station_id="front", weight_lb=D("450")),
+            LoadItemInput(station_id="bag", weight_lb=load_leg.delta_lb),
+        ],
+        fuel=[FuelStationInput(station_id="fuel", starting_gal=fuel_leg.delta_gal)],
+    )
+    fixed_result = calculate(profile, fixed_input)
+    assert fixed_result.overall_status != LimitStatus.OUT_OF_LIMITS
+    assert " AND " in combo.describe()
+
+
+def test_combination_priority_matches_its_fuel_side_leg():
+    """A combination's priority tier must come from its fuel-side leg -- an Add-Fuel combo
+    outranks a Reduce-Fuel combo, same fuel-safety bias as standalone recommendations."""
+    from app.domain.recommendations import _CATEGORY_PRIORITY
+
+    add_fuel_leg = Recommendation(
+        kind=RecommendationKind.ADD_FUEL, station_id="f", station_name="F",
+        delta_lb=D("30"), delta_gal=D("5"),
+    )
+    reduce_fuel_leg = Recommendation(
+        kind=RecommendationKind.REDUCE_FUEL, station_id="f", station_name="F",
+        delta_lb=D("30"), delta_gal=D("5"),
+    )
+    baggage_leg = Recommendation(
+        kind=RecommendationKind.ADD_BAGGAGE, station_id="b", station_name="B", delta_lb=D("10"),
+    )
+    add_fuel_combo = Recommendation(
+        kind=RecommendationKind.COMBINATION, station_id="f", station_name="F",
+        legs=(add_fuel_leg, baggage_leg),
+    )
+    reduce_fuel_combo = Recommendation(
+        kind=RecommendationKind.COMBINATION, station_id="f", station_name="F",
+        legs=(reduce_fuel_leg, baggage_leg),
+    )
+    candidates = [reduce_fuel_combo, add_fuel_combo]
+    from app.domain.recommendations import _combination_priority
+
+    candidates.sort(key=_combination_priority)
+    assert candidates[0] is add_fuel_combo
+
+
+def test_generate_recommendations_default_max_results_is_four():
+    import inspect
+
+    from app.domain.recommendations import generate_recommendations
+
+    signature = inspect.signature(generate_recommendations)
+    assert signature.parameters["max_results"].default == 4

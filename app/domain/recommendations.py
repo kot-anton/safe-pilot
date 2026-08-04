@@ -40,6 +40,7 @@ class RecommendationKind(str, Enum):
     REDUCE_SEAT_LOAD = "REDUCE_SEAT_LOAD"
     MOVE_LOAD = "MOVE_LOAD"
     SHIFT_FUEL = "SHIFT_FUEL"
+    COMBINATION = "COMBINATION"
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,7 @@ class Recommendation:
     note: str | None = None
     resulting_gal: Decimal | None = None
     tank_capacity_gal: Decimal | None = None
+    legs: tuple["Recommendation", ...] | None = None
 
     def describe(self) -> str:
         def display(value: Decimal) -> str:
@@ -106,6 +108,8 @@ class Recommendation:
                 f"Transfer {display(self.delta_gal)} US gal of fuel from {self.station_name} "
                 f"to {self.target_station_name} (total fuel unchanged)."
             )
+        if self.kind == RecommendationKind.COMBINATION:
+            return " AND ".join(leg.describe() for leg in self.legs)
         return "Adjustment."
 
 
@@ -158,6 +162,62 @@ def _current_load_weight(calc_input: CalculationInput, station_id: str) -> Decim
         if load.station_id == station_id:
             return load.weight_lb
     return Decimal("0")
+
+
+def _apply_combination_leg(
+    calc_input: CalculationInput, leg: Recommendation, amount: Decimal
+) -> CalculationInput:
+    """Apply `amount` (a fraction of `leg`'s full delta) of a single-category leg on top of
+    calc_input. Fuel-side and load-side legs never touch the same station, so applying one
+    leg's partial amount, then the other's, on the same base input is always safe."""
+    if leg.kind == RecommendationKind.REDUCE_FUEL:
+        current = next(f.starting_gal for f in calc_input.fuel if f.station_id == leg.station_id)
+        return _replace_fuel(calc_input, leg.station_id, current - amount)
+    if leg.kind == RecommendationKind.ADD_FUEL:
+        current = next(f.starting_gal for f in calc_input.fuel if f.station_id == leg.station_id)
+        return _replace_fuel(calc_input, leg.station_id, current + amount)
+    if leg.kind == RecommendationKind.SHIFT_FUEL:
+        source = next(f.starting_gal for f in calc_input.fuel if f.station_id == leg.station_id)
+        dest = next(
+            f.starting_gal for f in calc_input.fuel if f.station_id == leg.target_station_id
+        )
+        candidate = _replace_fuel(calc_input, leg.station_id, source - amount)
+        return _replace_fuel(candidate, leg.target_station_id, dest + amount)
+    if leg.kind in (RecommendationKind.REDUCE_BAGGAGE, RecommendationKind.REDUCE_SEAT_LOAD):
+        current = _current_load_weight(calc_input, leg.station_id)
+        return _replace_load(calc_input, leg.station_id, current - amount)
+    if leg.kind == RecommendationKind.ADD_BAGGAGE:
+        current = _current_load_weight(calc_input, leg.station_id)
+        return _replace_load(calc_input, leg.station_id, current + amount)
+    if leg.kind == RecommendationKind.MOVE_LOAD:
+        source_w = _current_load_weight(calc_input, leg.station_id)
+        dest_w = _current_load_weight(calc_input, leg.target_station_id)
+        candidate = _replace_load(calc_input, leg.station_id, source_w - amount)
+        return _replace_load(candidate, leg.target_station_id, dest_w + amount)
+    raise ValueError(f"Cannot apply combination leg of kind {leg.kind}")
+
+
+def _leg_magnitude(leg: Recommendation) -> Decimal:
+    return leg.delta_gal if leg.delta_gal is not None else leg.delta_lb
+
+
+def _leg_step(leg: Recommendation) -> Decimal:
+    return FUEL_STEP_GAL if leg.delta_gal is not None else LOAD_STEP_LB
+
+
+def _half_step_amount(alone: Decimal, step: Decimal) -> Decimal:
+    steps_count = max(1, int((alone / 2) / step))
+    return step * steps_count
+
+
+def _leg_with_amount(profile: AircraftProfile, leg: Recommendation, amount: Decimal) -> Recommendation:
+    if leg.delta_gal is not None:
+        station = profile.station(leg.station_id)
+        return dataclasses.replace(
+            leg, delta_gal=amount, delta_lb=amount * station.fuel_density_lb_per_gal,
+            resulting_gal=None,
+        )
+    return dataclasses.replace(leg, delta_lb=amount)
 
 
 # Moves are only ever searched within one of these groups -- never between them, and never
@@ -449,12 +509,95 @@ _CATEGORY_PRIORITY = {
     RecommendationKind.REDUCE_FUEL: 6,
 }
 
+MAX_COMBO_ATTEMPTS = 200
+
+_COMBINATION_FUEL_KINDS = (
+    RecommendationKind.REDUCE_FUEL, RecommendationKind.ADD_FUEL, RecommendationKind.SHIFT_FUEL,
+)
+_COMBINATION_LOAD_KINDS = (
+    RecommendationKind.MOVE_LOAD, RecommendationKind.REDUCE_SEAT_LOAD,
+    RecommendationKind.REDUCE_BAGGAGE, RecommendationKind.ADD_BAGGAGE,
+)
+
+
+def _search_combinations(
+    profile: AircraftProfile,
+    calc_input: CalculationInput,
+    fuel_side: list[Recommendation],
+    load_side: list[Recommendation],
+) -> list[Recommendation]:
+    results: list[Recommendation] = []
+    for fuel_leg in fuel_side:
+        if fuel_leg.kind not in _COMBINATION_FUEL_KINDS:
+            continue
+        fuel_alone = _leg_magnitude(fuel_leg)
+        fuel_step = _leg_step(fuel_leg)
+        for load_leg in load_side:
+            if load_leg.kind not in _COMBINATION_LOAD_KINDS:
+                continue
+            load_alone = _leg_magnitude(load_leg)
+            load_step = _leg_step(load_leg)
+
+            fuel_amount = _half_step_amount(fuel_alone, fuel_step)
+            load_amount = _half_step_amount(load_alone, load_step)
+            grow_fuel_next = fuel_amount <= load_amount
+            found_amounts = None
+            for _ in range(MAX_COMBO_ATTEMPTS):
+                if fuel_amount > fuel_alone or load_amount > load_alone:
+                    break
+                candidate = _apply_combination_leg(calc_input, fuel_leg, fuel_amount)
+                candidate = _apply_combination_leg(candidate, load_leg, load_amount)
+                result = _try_calculate(profile, candidate)
+                if result and _is_acceptable(result.overall_status):
+                    found_amounts = (fuel_amount, load_amount)
+                    break
+                if grow_fuel_next:
+                    fuel_amount += fuel_step
+                else:
+                    load_amount += load_step
+                grow_fuel_next = not grow_fuel_next
+
+            if found_amounts is None:
+                continue
+            fuel_amount, load_amount = found_amounts
+            if fuel_amount >= fuel_alone and load_amount >= load_alone:
+                continue  # no gentler than doing either alone -- not worth offering
+            results.append(
+                Recommendation(
+                    kind=RecommendationKind.COMBINATION,
+                    station_id=fuel_leg.station_id,
+                    station_name=fuel_leg.station_name,
+                    legs=(
+                        _leg_with_amount(profile, fuel_leg, fuel_amount),
+                        _leg_with_amount(profile, load_leg, load_amount),
+                    ),
+                )
+            )
+    return results
+
+
+def _combination_priority(recommendation: Recommendation) -> int:
+    if recommendation.kind == RecommendationKind.COMBINATION and recommendation.legs:
+        fuel_leg = recommendation.legs[0]
+        return _CATEGORY_PRIORITY.get(fuel_leg.kind, 99)
+    return _CATEGORY_PRIORITY.get(recommendation.kind, 99)
+
+
+def _tiebreak(recommendation: Recommendation) -> Decimal:
+    if recommendation.kind == RecommendationKind.COMBINATION and recommendation.legs:
+        return sum((_leg_magnitude(leg) for leg in recommendation.legs), Decimal("0"))
+    if recommendation.delta_lb is not None:
+        return recommendation.delta_lb
+    if recommendation.delta_gal is not None:
+        return recommendation.delta_gal
+    return Decimal("0")
+
 
 def generate_recommendations(
     profile: AircraftProfile,
     calc_input: CalculationInput,
     min_fuel_gal: dict[str, Decimal] | None = None,
-    max_results: int = 3,
+    max_results: int = 4,
     *,
     allow_fuel_transfer: bool = False,
     allow_add_fuel: bool = False,
@@ -467,28 +610,30 @@ def generate_recommendations(
     """
     min_fuel_gal = min_fuel_gal or {}
 
-    candidates: list[Recommendation] = []
-    candidates += _search_move_load(profile, calc_input)
-    candidates += _search_reduce_seat_load(profile, calc_input)
-    candidates += _search_reduce_baggage(profile, calc_input)
-    candidates += _search_add_baggage(profile, calc_input)
-    candidates += _search_reduce_fuel(profile, calc_input, min_fuel_gal)
-    if allow_fuel_transfer:
-        candidates += _search_shift_fuel(profile, calc_input, min_fuel_gal)
-    if allow_add_fuel:
-        candidates += _search_add_fuel(profile, calc_input)
-
-    def tiebreak(recommendation: Recommendation) -> Decimal:
-        if recommendation.delta_lb is not None:
-            return recommendation.delta_lb
-        if recommendation.delta_gal is not None:
-            return recommendation.delta_gal
-        return Decimal("0")
-
-    candidates.sort(
-        key=lambda recommendation: (
-            _CATEGORY_PRIORITY.get(recommendation.kind, 99),
-            tiebreak(recommendation),
-        )
+    move_load_results = _search_move_load(profile, calc_input)
+    reduce_seat_results = _search_reduce_seat_load(profile, calc_input)
+    reduce_baggage_results = _search_reduce_baggage(profile, calc_input)
+    add_baggage_results = _search_add_baggage(profile, calc_input)
+    reduce_fuel_results = _search_reduce_fuel(profile, calc_input, min_fuel_gal)
+    shift_fuel_results = (
+        _search_shift_fuel(profile, calc_input, min_fuel_gal) if allow_fuel_transfer else []
     )
+    add_fuel_results = _search_add_fuel(profile, calc_input) if allow_add_fuel else []
+
+    candidates: list[Recommendation] = []
+    candidates += move_load_results
+    candidates += reduce_seat_results
+    candidates += reduce_baggage_results
+    candidates += add_baggage_results
+    candidates += reduce_fuel_results
+    candidates += shift_fuel_results
+    candidates += add_fuel_results
+
+    load_side_results = (
+        move_load_results + reduce_seat_results + reduce_baggage_results + add_baggage_results
+    )
+    fuel_side_results = reduce_fuel_results + shift_fuel_results + add_fuel_results
+    candidates += _search_combinations(profile, calc_input, fuel_side_results, load_side_results)
+
+    candidates.sort(key=lambda recommendation: (_combination_priority(recommendation), _tiebreak(recommendation)))
     return candidates[:max_results]
