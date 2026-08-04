@@ -1,11 +1,12 @@
 """Deterministic recommendation solver for the Advanced per-station calculation.
 
 Every candidate is applied to a copy of the input and run through the complete calculator before
-it is returned. Moves are searched within a seat pair (Front <-> Rear) or within baggage
-stations -- never between the two, and never touching an ambiguous CUSTOM station. Seat-to-seat
-suggestions are phrased as a plain weight shift ("Move X lb from Front Seats to Rear Seats")
-without asserting who moves -- the app has no way to know who is sitting where, so it leaves
-that call to the pilot.
+it is returned. Moves are searched within `_MOVABLE_GROUPS`: a seat pair (Front <-> Rear) or
+Rear Seats <-> Baggage (rear-seat cargo relocation) -- Rear Seats participates in both groups,
+Front Seats never trades directly with Baggage, and no move ever touches an ambiguous CUSTOM
+station. Seat-to-seat suggestions are phrased as a plain weight shift ("Move X lb from Front
+Seats to Rear Seats") without asserting who moves -- the app has no way to know who is sitting
+where, so it leaves that call to the pilot.
 """
 from __future__ import annotations
 
@@ -232,7 +233,9 @@ _MOVABLE_GROUPS = (
 def _search_move_load(
     profile: AircraftProfile, calc_input: CalculationInput
 ) -> list[Recommendation]:
-    """Suggest shifting weight within a seat pair or within baggage stations.
+    """Suggest shifting weight within one of `_MOVABLE_GROUPS`: a seat pair (Front <-> Rear)
+    or Rear Seats <-> Baggage (rear-seat cargo relocation) -- Rear Seats participates in both
+    groups, Front Seats never trades directly with Baggage.
 
     Seat-to-seat suggestions are phrased as a plain weight shift ("Move X lb from Front Seats
     to Rear Seats") -- the app has no way to know who is sitting where, so it never names a
@@ -562,15 +565,22 @@ def _search_combinations(
             fuel_amount, load_amount = found_amounts
             if fuel_amount >= fuel_alone and load_amount >= load_alone:
                 continue  # no gentler than doing either alone -- not worth offering
+            fuel_result_leg = _leg_with_amount(profile, fuel_leg, fuel_amount)
+            load_result_leg = _leg_with_amount(profile, load_leg, load_amount)
+            # A leg's `note` (e.g. SHIFT_FUEL's fuel-system safety disclaimer) is preserved on
+            # the leg itself, but `Recommendation.describe()` for COMBINATION only joins each
+            # leg's `describe()` text and callers typically read `.note` off the top-level
+            # object -- surface it there too so it's never silently dropped.
+            note = next(
+                (leg.note for leg in (fuel_result_leg, load_result_leg) if leg.note), None
+            )
             results.append(
                 Recommendation(
                     kind=RecommendationKind.COMBINATION,
                     station_id=fuel_leg.station_id,
                     station_name=fuel_leg.station_name,
-                    legs=(
-                        _leg_with_amount(profile, fuel_leg, fuel_amount),
-                        _leg_with_amount(profile, load_leg, load_amount),
-                    ),
+                    note=note,
+                    legs=(fuel_result_leg, load_result_leg),
                 )
             )
     return results

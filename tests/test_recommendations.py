@@ -711,6 +711,67 @@ def test_combination_priority_matches_its_fuel_side_leg():
     assert candidates[0] is add_fuel_combo
 
 
+def test_combination_note_propagates_from_shift_fuel_leg(monkeypatch):
+    """A SHIFT_FUEL leg's fuel-system safety note must survive onto the top-level COMBINATION
+    recommendation -- describe() and the bot's rendering only look at each leg's own text /
+    the top-level `.note`, never descending into `.legs`, so without this the disclaimer would
+    be silently dropped whenever a fuel transfer is combined with a load-side fix."""
+    import app.domain.recommendations as recommendations_module
+
+    class _AcceptableResult:
+        overall_status = LimitStatus.WITHIN
+
+    monkeypatch.setattr(
+        recommendations_module, "_try_calculate", lambda profile, candidate: _AcceptableResult()
+    )
+
+    profile = make_test_profile()
+    calc_input = CalculationInput(
+        loads=[
+            LoadItemInput(station_id="front_seats", weight_lb=D("400")),
+            LoadItemInput(station_id="rear_seats", weight_lb=D("0")),
+            LoadItemInput(station_id="baggage_1", weight_lb=D("0")),
+        ],
+        fuel=[
+            FuelStationInput(station_id="main_fuel", starting_gal=D("40")),
+            FuelStationInput(station_id="aux_fuel", starting_gal=D("20")),
+        ],
+    )
+
+    fuel_note = (
+        "Use only if this transfer is permitted by the aircraft fuel-system "
+        "documents and can be performed as described."
+    )
+    fuel_leg = Recommendation(
+        kind=RecommendationKind.SHIFT_FUEL,
+        station_id="main_fuel",
+        station_name="Main Fuel",
+        target_station_id="aux_fuel",
+        target_station_name="Aux Fuel",
+        delta_gal=D("10"),
+        note=fuel_note,
+    )
+    load_leg = Recommendation(
+        kind=RecommendationKind.ADD_BAGGAGE,
+        station_id="baggage_1",
+        station_name="Baggage",
+        delta_lb=D("50"),
+    )
+
+    combos = recommendations_module._search_combinations(
+        profile, calc_input, fuel_side=[fuel_leg], load_side=[load_leg]
+    )
+    assert combos, "expected a combination to be found once _try_calculate always accepts"
+    combo = combos[0]
+    assert combo.kind == RecommendationKind.COMBINATION
+    assert combo.note == fuel_note
+    # And the leg itself must still carry the note too -- describe() reads each leg directly.
+    shift_fuel_result_leg = next(
+        leg for leg in combo.legs if leg.kind == RecommendationKind.SHIFT_FUEL
+    )
+    assert shift_fuel_result_leg.note == fuel_note
+
+
 def test_generate_recommendations_default_max_results_is_four():
     import inspect
 
