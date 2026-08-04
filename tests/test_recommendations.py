@@ -366,3 +366,22 @@ def test_recommendations_preserve_category_priority_over_raw_delta():
     candidates = [fuel, move]
     candidates.sort(key=lambda r: (_CATEGORY_PRIORITY[r.kind], r.delta_lb))
     assert candidates[0] is move
+
+
+def test_category_priority_puts_reduce_fuel_last():
+    """Removing fuel reduces a flight's safety margin, so it must be the least-preferred
+    single-category fix -- ranked below every other adjustment, including adding fuel."""
+    from app.domain.recommendations import _CATEGORY_PRIORITY, RecommendationKind
+
+    order = [
+        RecommendationKind.MOVE_LOAD,
+        RecommendationKind.REDUCE_BAGGAGE,
+        RecommendationKind.ADD_BAGGAGE,
+        RecommendationKind.SHIFT_FUEL,
+        RecommendationKind.ADD_FUEL,
+        RecommendationKind.REDUCE_FUEL,
+    ]
+    priorities = [_CATEGORY_PRIORITY[kind] for kind in order]
+    assert priorities == sorted(priorities), (
+        f"expected strictly increasing priority in this order, got {priorities}"
+    )

@@ -392,10 +392,10 @@ def _search_add_fuel(
 _CATEGORY_PRIORITY = {
     RecommendationKind.MOVE_LOAD: 0,
     RecommendationKind.REDUCE_BAGGAGE: 1,
-    RecommendationKind.REDUCE_FUEL: 2,
+    RecommendationKind.ADD_BAGGAGE: 2,
     RecommendationKind.SHIFT_FUEL: 3,
-    RecommendationKind.ADD_BAGGAGE: 4,
-    RecommendationKind.ADD_FUEL: 5,
+    RecommendationKind.ADD_FUEL: 4,
+    RecommendationKind.REDUCE_FUEL: 5,
 }
 
 
