@@ -510,3 +510,101 @@ def test_reduce_seat_load_allows_rear_seat_below_front_floor():
     )
     fixed_result = calculate(profile, fixed_input)
     assert fixed_result.overall_status != LimitStatus.OUT_OF_LIMITS
+
+
+def test_move_load_allows_rear_seats_to_baggage():
+    """Rear Seats and Baggage can now trade weight directly (e.g. a loose item relocated from
+    the rear seat area to the baggage compartment) -- previously these were disjoint groups."""
+    from app.domain.envelope import CGEnvelope, EnvelopeRow
+    from app.domain.models import AircraftProfile, StationProfile, StationType
+
+    profile = AircraftProfile(
+        tail_number="N-RB",
+        revision_number=1,
+        basic_empty_weight_lb=D("1000"),
+        basic_empty_moment_lb_in=D("40000"),
+        max_takeoff_weight_lb=D("2000"),
+        stations=[
+            StationProfile(
+                station_id="rear", name="Rear Seats", station_type=StationType.REAR_SEATS,
+                default_arm_in=D("80"),
+            ),
+            StationProfile(
+                station_id="bag", name="Baggage", station_type=StationType.BAGGAGE,
+                default_arm_in=D("20"),
+            ),
+        ],
+        envelope=CGEnvelope(
+            [EnvelopeRow(D("1200"), D("35"), D("45")), EnvelopeRow(D("1600"), D("35"), D("45"))]
+        ),
+    )
+    calc_input = CalculationInput(
+        loads=[
+            LoadItemInput(station_id="rear", weight_lb=D("300")),
+            LoadItemInput(station_id="bag", weight_lb=D("0")),
+        ],
+        fuel=[],
+    )
+    result = calculate(profile, calc_input)
+    assert result.overall_status == LimitStatus.OUT_OF_LIMITS  # too far aft
+
+    recs = generate_recommendations(profile, calc_input)
+    move_recs = [
+        r for r in recs
+        if r.kind == RecommendationKind.MOVE_LOAD
+        and r.station_id == "rear" and r.target_station_id == "bag"
+    ]
+    assert move_recs, "expected a Rear Seats -> Baggage move suggestion"
+    rec = move_recs[0]
+    assert rec.delta_lb == D("92")
+
+    fixed_input = CalculationInput(
+        loads=[
+            LoadItemInput(station_id="rear", weight_lb=D("300") - rec.delta_lb),
+            LoadItemInput(station_id="bag", weight_lb=rec.delta_lb),
+        ],
+        fuel=[],
+    )
+    fixed_result = calculate(profile, fixed_input)
+    assert fixed_result.overall_status != LimitStatus.OUT_OF_LIMITS
+
+
+def test_move_load_still_excludes_front_seats_from_baggage():
+    """Front Seats never trades weight with Baggage -- there's normally no loose cargo at a
+    front seat position, and a person's own bodyweight isn't something to 'move' to cargo."""
+    from app.domain.envelope import CGEnvelope, EnvelopeRow
+    from app.domain.models import AircraftProfile, StationProfile, StationType
+
+    profile = AircraftProfile(
+        tail_number="N-FB",
+        revision_number=1,
+        basic_empty_weight_lb=D("1000"),
+        basic_empty_moment_lb_in=D("40000"),
+        max_takeoff_weight_lb=D("2000"),
+        stations=[
+            StationProfile(
+                station_id="front", name="Front Seats", station_type=StationType.FRONT_SEATS,
+                default_arm_in=D("80"),
+            ),
+            StationProfile(
+                station_id="bag", name="Baggage", station_type=StationType.BAGGAGE,
+                default_arm_in=D("20"),
+            ),
+        ],
+        envelope=CGEnvelope(
+            [EnvelopeRow(D("1200"), D("35"), D("45")), EnvelopeRow(D("1600"), D("35"), D("45"))]
+        ),
+    )
+    calc_input = CalculationInput(
+        loads=[
+            LoadItemInput(station_id="front", weight_lb=D("300")),
+            LoadItemInput(station_id="bag", weight_lb=D("0")),
+        ],
+        fuel=[],
+    )
+    recs = generate_recommendations(profile, calc_input)
+    assert not any(
+        r.kind == RecommendationKind.MOVE_LOAD
+        and {r.station_id, r.target_station_id} == {"front", "bag"}
+        for r in recs
+    )

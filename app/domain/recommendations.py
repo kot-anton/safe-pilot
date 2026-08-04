@@ -164,8 +164,8 @@ def _current_load_weight(calc_input: CalculationInput, station_id: str) -> Decim
 # touching an ambiguous CUSTOM station (could be equipment, a fixed installation, or movable
 # cargo -- no way to tell automatically).
 _MOVABLE_GROUPS = (
-    {StationType.FRONT_SEATS, StationType.REAR_SEATS},
-    {StationType.BAGGAGE},
+    {StationType.FRONT_SEATS, StationType.REAR_SEATS},   # seat swap
+    {StationType.REAR_SEATS, StationType.BAGGAGE},       # rear-seat cargo <-> baggage
 )
 
 
