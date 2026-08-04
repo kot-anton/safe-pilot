@@ -603,6 +603,22 @@ def _tiebreak(recommendation: Recommendation) -> Decimal:
     return Decimal("0")
 
 
+def _reduce_fuel_arm_tiebreak(recommendation: Recommendation, profile: AircraftProfile) -> Decimal:
+    """When two REDUCE_FUEL candidates need an equal (or near-equal) cut, prefer draining the
+    tank with the larger ARM first. A tank far from the datum is the one most aircraft fuel
+    systems treat as auxiliary/supplemental (feeding into a tank closer to the datum rather than
+    the engine directly), so it's the one a pilot can actually leave under-filled -- unlike the
+    near-datum tank, which is usually the one the fuel system keeps full. `_tiebreak` above still
+    decides first whenever the required cut actually differs between tanks."""
+    if recommendation.kind == RecommendationKind.COMBINATION and recommendation.legs:
+        leg = recommendation.legs[0]
+    else:
+        leg = recommendation
+    if leg.kind != RecommendationKind.REDUCE_FUEL:
+        return Decimal("0")
+    return -profile.station(leg.station_id).default_arm_in
+
+
 def generate_recommendations(
     profile: AircraftProfile,
     calc_input: CalculationInput,
@@ -645,5 +661,11 @@ def generate_recommendations(
     fuel_side_results = reduce_fuel_results + shift_fuel_results + add_fuel_results
     candidates += _search_combinations(profile, calc_input, fuel_side_results, load_side_results)
 
-    candidates.sort(key=lambda recommendation: (_combination_priority(recommendation), _tiebreak(recommendation)))
+    candidates.sort(
+        key=lambda recommendation: (
+            _combination_priority(recommendation),
+            _tiebreak(recommendation),
+            _reduce_fuel_arm_tiebreak(recommendation, profile),
+        )
+    )
     return candidates[:max_results]
