@@ -585,7 +585,7 @@ def _combination_priority(recommendation: Recommendation) -> int:
 
 def _tiebreak(recommendation: Recommendation) -> Decimal:
     if recommendation.kind == RecommendationKind.COMBINATION and recommendation.legs:
-        return sum((_leg_magnitude(leg) for leg in recommendation.legs), Decimal("0"))
+        return sum((leg.delta_lb for leg in recommendation.legs), Decimal("0"))
     if recommendation.delta_lb is not None:
         return recommendation.delta_lb
     if recommendation.delta_gal is not None:

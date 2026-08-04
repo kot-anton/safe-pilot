@@ -23,9 +23,10 @@ def test_recommendation_reduces_fuel_for_overweight():
     result = calculate(profile, calc_input)
     assert result.overall_status == LimitStatus.OUT_OF_LIMITS
 
-    # max_results is raised here because the new fuel+load combination search (Task 5) can
-    # surface gentler COMBINATION recommendations that legitimately outrank a standalone
-    # REDUCE_FUEL within the default cutoff -- this test verifies the standalone recommendation
+    # max_results is raised here because, for this fixture, the fuel+load combination search
+    # (Task 5) finds a combo (9.2 gal fuel + 55 lb seat-load, ~110.20 lb weight-equivalent) that
+    # very narrowly edges out the standalone Reduce Fuel fix (~110.40 lb) on the tiebreak -- a
+    # legitimate near-tie, not a units bug. This test verifies the standalone recommendation
     # itself is still found and well-formed, not that it wins the default top-N ranking.
     recs = generate_recommendations(profile, calc_input, max_results=10)
     fuel_recs = [r for r in recs if r.kind == RecommendationKind.REDUCE_FUEL]
