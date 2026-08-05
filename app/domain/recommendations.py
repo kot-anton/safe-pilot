@@ -22,6 +22,7 @@ from app.domain.exceptions import DomainError
 from app.domain.models import (
     AircraftProfile,
     CalculationInput,
+    FuelStationInput,
     LoadItemInput,
     StationProfile,
     StationType,
@@ -142,6 +143,42 @@ def _replace_fuel(
     return dataclasses.replace(calc_input, fuel=new_fuel)
 
 
+def _reduce_fuel_floor_gal(fuel: FuelStationInput, external_floor: Decimal) -> Decimal:
+    """A tank can never be loaded below its own taxi burn -- that fuel is spent on the ground
+    before the CG condition being calculated even applies. Taxi burn is therefore a hard floor
+    in addition to whatever minimum the pilot/caller supplied."""
+    return max(external_floor, fuel.taxi_burn_gal)
+
+
+def _replace_fuel_reducing(
+    calc_input: CalculationInput, station_id: str, new_starting_gal: Decimal
+) -> CalculationInput:
+    """Like `_replace_fuel`, but for a *reduction*: also caps enroute burn down to whatever the
+    lower starting quantity can actually supply. Without this, loading less into a tank that was
+    planned to be flown dry (enroute burn == starting fuel, common for an AUX/tip tank that feeds
+    into the main tank rather than the engine) makes taxi+enroute burn exceed the new starting
+    fuel, which the calculator correctly treats as an invalid input -- silently making that tank
+    look infeasible to reduce, when the real fix is simply to plan on burning less from it too."""
+    found = False
+    new_fuel = []
+    for fuel in calc_input.fuel:
+        if fuel.station_id == station_id:
+            capped_enroute = min(
+                fuel.enroute_burn_gal, max(Decimal("0"), new_starting_gal - fuel.taxi_burn_gal)
+            )
+            new_fuel.append(
+                dataclasses.replace(
+                    fuel, starting_gal=new_starting_gal, enroute_burn_gal=capped_enroute
+                )
+            )
+            found = True
+        else:
+            new_fuel.append(fuel)
+    if not found:
+        raise ValueError(f"Fuel station '{station_id}' is absent from calculation input")
+    return dataclasses.replace(calc_input, fuel=new_fuel)
+
+
 def _replace_load(
     calc_input: CalculationInput, station_id: str, new_weight: Decimal
 ) -> CalculationInput:
@@ -173,7 +210,7 @@ def _apply_combination_leg(
     leg's partial amount, then the other's, on the same base input is always safe."""
     if leg.kind == RecommendationKind.REDUCE_FUEL:
         current = next(f.starting_gal for f in calc_input.fuel if f.station_id == leg.station_id)
-        return _replace_fuel(calc_input, leg.station_id, current - amount)
+        return _replace_fuel_reducing(calc_input, leg.station_id, current - amount)
     if leg.kind == RecommendationKind.ADD_FUEL:
         current = next(f.starting_gal for f in calc_input.fuel if f.station_id == leg.station_id)
         return _replace_fuel(calc_input, leg.station_id, current + amount)
@@ -182,7 +219,7 @@ def _apply_combination_leg(
         dest = next(
             f.starting_gal for f in calc_input.fuel if f.station_id == leg.target_station_id
         )
-        candidate = _replace_fuel(calc_input, leg.station_id, source - amount)
+        candidate = _replace_fuel_reducing(calc_input, leg.station_id, source - amount)
         return _replace_fuel(candidate, leg.target_station_id, dest + amount)
     if leg.kind in (RecommendationKind.REDUCE_BAGGAGE, RecommendationKind.REDUCE_SEAT_LOAD):
         current = _current_load_weight(calc_input, leg.station_id)
@@ -390,7 +427,7 @@ def _search_reduce_fuel(
 ) -> list[Recommendation]:
     results: list[Recommendation] = []
     for fuel in calc_input.fuel:
-        floor = min_fuel_gal.get(fuel.station_id, Decimal("0"))
+        floor = _reduce_fuel_floor_gal(fuel, min_fuel_gal.get(fuel.station_id, Decimal("0")))
         if fuel.starting_gal <= floor:
             continue
         station = profile.station(fuel.station_id)
@@ -400,7 +437,7 @@ def _search_reduce_fuel(
             target = fuel.starting_gal - delta_gal
             if target < floor:
                 break
-            candidate = _replace_fuel(calc_input, fuel.station_id, target)
+            candidate = _replace_fuel_reducing(calc_input, fuel.station_id, target)
             result = _try_calculate(profile, candidate)
             if result and _is_acceptable(result.overall_status):
                 results.append(
@@ -426,7 +463,7 @@ def _search_shift_fuel(
     """Optional only: actual fuel transfer must be permitted by the aircraft fuel system."""
     results: list[Recommendation] = []
     for source in calc_input.fuel:
-        floor = min_fuel_gal.get(source.station_id, Decimal("0"))
+        floor = _reduce_fuel_floor_gal(source, min_fuel_gal.get(source.station_id, Decimal("0")))
         if source.starting_gal <= floor:
             continue
         source_station = profile.station(source.station_id)
@@ -443,7 +480,7 @@ def _search_shift_fuel(
             steps = min(int(headroom / FUEL_STEP_GAL), MAX_STEPS)
             for step in range(1, steps + 1):
                 delta = FUEL_STEP_GAL * step
-                candidate = _replace_fuel(
+                candidate = _replace_fuel_reducing(
                     calc_input, source.station_id, source.starting_gal - delta
                 )
                 candidate = _replace_fuel(
