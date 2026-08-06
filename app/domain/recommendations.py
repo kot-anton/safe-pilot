@@ -33,6 +33,10 @@ FUEL_STEP_GAL = Decimal("0.1")
 LOAD_STEP_LB = Decimal("1")
 MAX_STEPS = 5000
 
+_FUEL_RESERVE_NOTE = (
+    "Confirm the resulting fuel still meets your planned trip and legal reserve requirements."
+)
+
 
 class RecommendationKind(str, Enum):
     REDUCE_FUEL = "REDUCE_FUEL"
@@ -58,6 +62,7 @@ class Recommendation:
     resulting_gal: Decimal | None = None
     tank_capacity_gal: Decimal | None = None
     legs: tuple["Recommendation", ...] | None = None
+    resulting_takeoff_cg_in: Decimal | None = None
 
     def describe(self) -> str:
         def display(value: Decimal) -> str:
@@ -70,8 +75,7 @@ class Recommendation:
             )
             if self.resulting_gal is not None:
                 text += f" Target level: {display(self.resulting_gal)} gal."
-            return text
-        if self.kind == RecommendationKind.ADD_FUEL:
+        elif self.kind == RecommendationKind.ADD_FUEL:
             text = (
                 f"Add fuel to {self.station_name}: +{display(self.delta_gal)} US gal "
                 f"(+{display(self.delta_lb)} lb)."
@@ -86,33 +90,41 @@ class Recommendation:
                     )
                 else:
                     text += f" Target level: {display(self.resulting_gal)} gal."
-            return text
-        if self.kind in (RecommendationKind.REDUCE_BAGGAGE, RecommendationKind.REDUCE_SEAT_LOAD):
+        elif self.kind in (RecommendationKind.REDUCE_BAGGAGE, RecommendationKind.REDUCE_SEAT_LOAD):
             kg = lb_to_kg(self.delta_lb)
-            return (
+            text = (
                 f"Remove {display(self.delta_lb)} lb ({display(kg)} kg) from "
                 f"{self.station_name}."
             )
-        if self.kind == RecommendationKind.ADD_BAGGAGE:
+        elif self.kind == RecommendationKind.ADD_BAGGAGE:
             kg = lb_to_kg(self.delta_lb)
-            return (
+            text = (
                 f"Add {display(self.delta_lb)} lb ({display(kg)} kg) to "
                 f"{self.station_name}."
             )
-        if self.kind == RecommendationKind.MOVE_LOAD:
+        elif self.kind == RecommendationKind.MOVE_LOAD:
             kg = lb_to_kg(self.delta_lb)
-            return (
+            text = (
                 f"Move {display(self.delta_lb)} lb ({display(kg)} kg) from {self.station_name} "
                 f"to {self.target_station_name}."
             )
-        if self.kind == RecommendationKind.SHIFT_FUEL:
-            return (
+        elif self.kind == RecommendationKind.SHIFT_FUEL:
+            text = (
                 f"Transfer {display(self.delta_gal)} US gal of fuel from {self.station_name} "
                 f"to {self.target_station_name} (total fuel unchanged)."
             )
-        if self.kind == RecommendationKind.COMBINATION:
-            return " AND ".join(leg.describe() for leg in self.legs)
-        return "Adjustment."
+        elif self.kind == RecommendationKind.COMBINATION:
+            text = " AND ".join(leg.describe() for leg in self.legs)
+        else:
+            text = "Adjustment."
+
+        # Same-amount suggestions targeting different stations (e.g. two tanks with different
+        # ARMs both needing the same weight cut) look identical without this -- the resulting CG
+        # is where their difference actually shows up, so it's surfaced on every suggestion
+        # rather than only when a look-alike happens to be nearby.
+        if self.resulting_takeoff_cg_in is not None:
+            text += f" Resulting takeoff CG: {display(self.resulting_takeoff_cg_in)} in."
+        return text
 
 
 def _is_acceptable(status: LimitStatus) -> bool:
@@ -249,13 +261,16 @@ def _half_step_amount(alone: Decimal, step: Decimal) -> Decimal:
 
 
 def _leg_with_amount(profile: AircraftProfile, leg: Recommendation, amount: Decimal) -> Recommendation:
+    """The combination search scales a leg down to a partial amount, so any resulting-CG value
+    carried over from that leg's own full alone-fix (or absent, for a ceiling-only leg) no longer
+    describes this smaller amount -- only the combination's own top-level result does."""
     if leg.delta_gal is not None:
         station = profile.station(leg.station_id)
         return dataclasses.replace(
             leg, delta_gal=amount, delta_lb=amount * station.fuel_density_lb_per_gal,
-            resulting_gal=None,
+            resulting_gal=None, resulting_takeoff_cg_in=None,
         )
-    return dataclasses.replace(leg, delta_lb=amount)
+    return dataclasses.replace(leg, delta_lb=amount, resulting_takeoff_cg_in=None)
 
 
 # Moves are only ever searched within one of these groups -- never between them, and never
@@ -311,6 +326,7 @@ def _search_move_load(
                                 target_station_id=destination.station_id,
                                 target_station_name=destination.name,
                                 delta_lb=delta,
+                                resulting_takeoff_cg_in=result.takeoff.cg_in,
                             )
                         )
                         break
@@ -337,6 +353,7 @@ def _search_reduce_baggage(
                         station_id=station.station_id,
                         station_name=station.name,
                         delta_lb=delta,
+                        resulting_takeoff_cg_in=result.takeoff.cg_in,
                     )
                 )
                 break
@@ -379,6 +396,7 @@ def _search_reduce_seat_load(
                         station_id=station.station_id,
                         station_name=station.name,
                         delta_lb=delta,
+                        resulting_takeoff_cg_in=result.takeoff.cg_in,
                     )
                 )
                 break
@@ -414,6 +432,7 @@ def _search_add_baggage(
                         station_id=station.station_id,
                         station_name=station.name,
                         delta_lb=delta,
+                        resulting_takeoff_cg_in=result.takeoff.cg_in,
                     )
                 )
                 break
@@ -449,6 +468,8 @@ def _search_reduce_fuel(
                         delta_gal=delta_gal,
                         resulting_gal=target,
                         tank_capacity_gal=station.maximum_volume_gal,
+                        note=_FUEL_RESERVE_NOTE,
+                        resulting_takeoff_cg_in=result.takeoff.cg_in,
                     )
                 )
                 break
@@ -502,6 +523,7 @@ def _search_shift_fuel(
                                 "Use only if this transfer is permitted by the aircraft fuel-system "
                                 "documents and can be performed as described."
                             ),
+                            resulting_takeoff_cg_in=result.takeoff.cg_in,
                         )
                     )
                     break
@@ -533,6 +555,7 @@ def _search_add_fuel(
                         delta_gal=delta_gal,
                         resulting_gal=target,
                         tank_capacity_gal=station.maximum_volume_gal,
+                        resulting_takeoff_cg_in=result.takeoff.cg_in,
                     )
                 )
                 break
@@ -560,11 +583,103 @@ _COMBINATION_LOAD_KINDS = (
 )
 
 
+def _verified_key(recommendation: Recommendation) -> tuple[RecommendationKind, str]:
+    return (recommendation.kind, recommendation.station_id)
+
+
+def _reduce_fuel_ceiling_legs(
+    profile: AircraftProfile,
+    calc_input: CalculationInput,
+    min_fuel_gal: dict[str, Decimal],
+    exclude_station_ids: set[str],
+) -> list[Recommendation]:
+    """Structural (unverified) full-range REDUCE_FUEL legs, for combination search only.
+
+    `_search_reduce_fuel` only reports a station when draining it *alone* already fixes the
+    violation. But a station whose own maximum possible reduction still isn't enough by itself
+    can be exactly what's needed once paired with a load-side leg (e.g. a large charter/overload
+    case needing more than any single station can fix alone) -- so the combination search gets
+    each remaining station's full headroom to work with, without asserting that headroom alone
+    is a working fix. Stations already covered by a verified alone-fix are excluded; that
+    stronger result is used instead."""
+    legs: list[Recommendation] = []
+    for fuel in calc_input.fuel:
+        if fuel.station_id in exclude_station_ids:
+            continue
+        floor = _reduce_fuel_floor_gal(fuel, min_fuel_gal.get(fuel.station_id, Decimal("0")))
+        if fuel.starting_gal <= floor:
+            continue
+        station = profile.station(fuel.station_id)
+        delta_gal = fuel.starting_gal - floor
+        legs.append(
+            Recommendation(
+                kind=RecommendationKind.REDUCE_FUEL,
+                station_id=station.station_id,
+                station_name=station.name,
+                delta_lb=delta_gal * station.fuel_density_lb_per_gal,
+                delta_gal=delta_gal,
+                tank_capacity_gal=station.maximum_volume_gal,
+                note=_FUEL_RESERVE_NOTE,
+            )
+        )
+    return legs
+
+
+def _reduce_seat_ceiling_legs(
+    profile: AircraftProfile, calc_input: CalculationInput, exclude_station_ids: set[str]
+) -> list[Recommendation]:
+    """Structural (unverified) full-range REDUCE_SEAT_LOAD legs -- see
+    `_reduce_fuel_ceiling_legs` for why the combination search needs these alongside the
+    verified alone-fix search."""
+    legs: list[Recommendation] = []
+    for station in profile.stations:
+        if station.station_type not in _SEAT_STATION_TYPES or station.station_id in exclude_station_ids:
+            continue
+        current = _current_load_weight(calc_input, station.station_id)
+        floor = _seat_floor_lb(station)
+        if current <= floor:
+            continue
+        legs.append(
+            Recommendation(
+                kind=RecommendationKind.REDUCE_SEAT_LOAD,
+                station_id=station.station_id,
+                station_name=station.name,
+                delta_lb=current - floor,
+            )
+        )
+    return legs
+
+
+def _reduce_baggage_ceiling_legs(
+    profile: AircraftProfile, calc_input: CalculationInput, exclude_station_ids: set[str]
+) -> list[Recommendation]:
+    """Structural (unverified) full-range REDUCE_BAGGAGE legs -- see
+    `_reduce_fuel_ceiling_legs` for why the combination search needs these alongside the
+    verified alone-fix search."""
+    legs: list[Recommendation] = []
+    for station in profile.baggage_stations:
+        if station.station_id in exclude_station_ids:
+            continue
+        current = _current_load_weight(calc_input, station.station_id)
+        if current <= 0:
+            continue
+        legs.append(
+            Recommendation(
+                kind=RecommendationKind.REDUCE_BAGGAGE,
+                station_id=station.station_id,
+                station_name=station.name,
+                delta_lb=current,
+            )
+        )
+    return legs
+
+
 def _search_combinations(
     profile: AircraftProfile,
     calc_input: CalculationInput,
     fuel_side: list[Recommendation],
     load_side: list[Recommendation],
+    verified: set[tuple[RecommendationKind, str]],
 ) -> list[Recommendation]:
     results: list[Recommendation] = []
     for fuel_leg in fuel_side:
@@ -572,11 +687,13 @@ def _search_combinations(
             continue
         fuel_alone = _leg_magnitude(fuel_leg)
         fuel_step = _leg_step(fuel_leg)
+        fuel_verified = _verified_key(fuel_leg) in verified
         for load_leg in load_side:
             if load_leg.kind not in _COMBINATION_LOAD_KINDS:
                 continue
             load_alone = _leg_magnitude(load_leg)
             load_step = _leg_step(load_leg)
+            load_verified = _verified_key(load_leg) in verified
 
             fuel_amount = _half_step_amount(fuel_alone, fuel_step)
             load_amount = _half_step_amount(load_alone, load_step)
@@ -600,8 +717,21 @@ def _search_combinations(
             if found_amounts is None:
                 continue
             fuel_amount, load_amount = found_amounts
-            if fuel_amount >= fuel_alone and load_amount >= load_alone:
-                continue  # no gentler than doing either alone -- not worth offering
+            # A leg with no verified alone-fix (its own maximum wasn't enough by itself) has no
+            # standalone suggestion to be compared against, so a combination using it is always
+            # new information. Only when a leg *is* verified do we require the combination to
+            # improve on that leg's own already-offered alone amount -- otherwise the combo is
+            # strictly no better than the simpler single-category suggestion that already exists.
+            if fuel_verified and load_verified:
+                not_worth_it = fuel_amount >= fuel_alone and load_amount >= load_alone
+            elif fuel_verified:
+                not_worth_it = fuel_amount >= fuel_alone
+            elif load_verified:
+                not_worth_it = load_amount >= load_alone
+            else:
+                not_worth_it = False
+            if not_worth_it:
+                continue
             fuel_result_leg = _leg_with_amount(profile, fuel_leg, fuel_amount)
             load_result_leg = _leg_with_amount(profile, load_leg, load_amount)
             # A leg's `note` (e.g. SHIFT_FUEL's fuel-system safety disclaimer) is preserved on
@@ -618,6 +748,7 @@ def _search_combinations(
                     station_name=fuel_leg.station_name,
                     note=note,
                     legs=(fuel_result_leg, load_result_leg),
+                    resulting_takeoff_cg_in=result.takeoff.cg_in,
                 )
             )
     return results
@@ -692,11 +823,34 @@ def generate_recommendations(
     candidates += shift_fuel_results
     candidates += add_fuel_results
 
-    load_side_results = (
-        move_load_results + reduce_seat_results + reduce_baggage_results + add_baggage_results
+    # A station whose own maximum possible reduction still doesn't fix the violation alone (so
+    # it never made it into the verified results above) can still be exactly what's needed once
+    # paired with another leg -- e.g. a full-aircraft overload that needs more than any single
+    # tank or seat can fix by itself. These ceiling-only legs give the combination search each
+    # remaining station's full headroom without claiming that headroom alone is a working fix.
+    verified = {_verified_key(recommendation) for recommendation in candidates}
+    reduce_fuel_ceiling = _reduce_fuel_ceiling_legs(
+        profile, calc_input, min_fuel_gal, {r.station_id for r in reduce_fuel_results}
     )
-    fuel_side_results = reduce_fuel_results + shift_fuel_results + add_fuel_results
-    candidates += _search_combinations(profile, calc_input, fuel_side_results, load_side_results)
+    reduce_seat_ceiling = _reduce_seat_ceiling_legs(
+        profile, calc_input, {r.station_id for r in reduce_seat_results}
+    )
+    reduce_baggage_ceiling = _reduce_baggage_ceiling_legs(
+        profile, calc_input, {r.station_id for r in reduce_baggage_results}
+    )
+
+    load_side_results = (
+        move_load_results
+        + reduce_seat_results + reduce_seat_ceiling
+        + reduce_baggage_results + reduce_baggage_ceiling
+        + add_baggage_results
+    )
+    fuel_side_results = (
+        reduce_fuel_results + reduce_fuel_ceiling + shift_fuel_results + add_fuel_results
+    )
+    candidates += _search_combinations(
+        profile, calc_input, fuel_side_results, load_side_results, verified
+    )
 
     candidates.sort(
         key=lambda recommendation: (

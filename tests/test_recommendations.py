@@ -247,7 +247,9 @@ def test_recommendation_suggests_moving_weight_between_front_and_rear_seats():
         r for r in move_recs if r.station_id == "front" and r.target_station_id == "rear"
     ]
     assert front_to_rear, "expected a Front Seats -> Rear Seats move suggestion"
-    assert front_to_rear[0].describe() == "Move 55 lb (24.9 kg) from Front Seats to Rear Seats."
+    assert front_to_rear[0].describe().startswith(
+        "Move 55 lb (24.9 kg) from Front Seats to Rear Seats."
+    )
 
 
 def test_recommendation_does_not_move_ambiguous_custom_load():
@@ -680,6 +682,69 @@ def test_combination_recommendation_found_when_no_single_fix_is_gentler():
     assert " AND " in combo.describe()
 
 
+def test_combination_found_when_neither_leg_works_alone():
+    """A violation bigger than either single leg's own maximum reduction (a heavily-loaded
+    aircraft, e.g. flying with several passengers and full fuel) must still be found via
+    combining the two. The combination search used to only ever pair legs that already had a
+    verified alone-fix; a violation needing more than any single leg's own max -- even though a
+    fix existed comfortably within both legs' limits -- silently returned zero recommendations."""
+    from app.domain.envelope import CGEnvelope, EnvelopeRow
+    from app.domain.models import AircraftProfile, StationProfile, StationType
+
+    profile = AircraftProfile(
+        tail_number="N-NEITHER-ALONE",
+        revision_number=1,
+        basic_empty_weight_lb=D("1000"),
+        basic_empty_moment_lb_in=D("50000"),  # cg 50.0
+        max_takeoff_weight_lb=D("1070"),
+        stations=[
+            StationProfile(
+                station_id="rear", name="Rear Seats", station_type=StationType.REAR_SEATS,
+                default_arm_in=D("60"),
+            ),
+            StationProfile(
+                station_id="fuel", name="Main Fuel", station_type=StationType.FUEL,
+                default_arm_in=D("40"), maximum_volume_gal=D("20"), fuel_density_lb_per_gal=D("6"),
+            ),
+        ],
+        # Deliberately wide so CG is never the binding constraint -- this test is about the
+        # combination search finding a fix for a pure weight violation neither leg can solve alone.
+        envelope=CGEnvelope(
+            [EnvelopeRow(D("500"), D("10"), D("200")), EnvelopeRow(D("2000"), D("10"), D("200"))]
+        ),
+    )
+    calc_input = CalculationInput(
+        loads=[LoadItemInput(station_id="rear", weight_lb=D("100"))],
+        fuel=[FuelStationInput(station_id="fuel", starting_gal=D("20"))],
+    )
+    result = calculate(profile, calc_input)
+    assert result.overall_status == LimitStatus.OUT_OF_LIMITS
+    # Rear Seats alone maxes out at -100 lb (weight 1120, still over 1070); Main Fuel alone maxes
+    # out at -120 lb (weight 1100, still over 1070) -- neither reaches the required 1070 alone.
+    assert result.takeoff.total_weight_lb == D("1220")
+
+    recs = generate_recommendations(profile, calc_input, max_results=10)
+    assert not any(
+        r.kind in (RecommendationKind.REDUCE_SEAT_LOAD, RecommendationKind.REDUCE_FUEL)
+        for r in recs
+    ), "neither leg should have a verified alone-fix in this scenario"
+
+    combos = [r for r in recs if r.kind == RecommendationKind.COMBINATION]
+    assert combos, "expected a combination fix even though neither leg works alone"
+    fuel_leg, load_leg = combos[0].legs
+    assert fuel_leg.kind == RecommendationKind.REDUCE_FUEL
+    assert load_leg.kind == RecommendationKind.REDUCE_SEAT_LOAD
+    assert fuel_leg.delta_gal <= D("20")
+    assert load_leg.delta_lb <= D("100")
+
+    fixed_input = CalculationInput(
+        loads=[LoadItemInput(station_id="rear", weight_lb=D("100") - load_leg.delta_lb)],
+        fuel=[FuelStationInput(station_id="fuel", starting_gal=D("20") - fuel_leg.delta_gal)],
+    )
+    fixed_result = calculate(profile, fixed_input)
+    assert fixed_result.overall_status != LimitStatus.OUT_OF_LIMITS
+
+
 def test_combination_priority_matches_its_fuel_side_leg():
     """A combination's priority tier must come from its fuel-side leg -- an Add-Fuel combo
     outranks a Reduce-Fuel combo, same fuel-safety bias as standalone recommendations."""
@@ -718,8 +783,12 @@ def test_combination_note_propagates_from_shift_fuel_leg(monkeypatch):
     be silently dropped whenever a fuel transfer is combined with a load-side fix."""
     import app.domain.recommendations as recommendations_module
 
+    class _AcceptablePhase:
+        cg_in = D("50.0")
+
     class _AcceptableResult:
         overall_status = LimitStatus.WITHIN
+        takeoff = _AcceptablePhase()
 
     monkeypatch.setattr(
         recommendations_module, "_try_calculate", lambda profile, candidate: _AcceptableResult()
@@ -759,7 +828,7 @@ def test_combination_note_propagates_from_shift_fuel_leg(monkeypatch):
     )
 
     combos = recommendations_module._search_combinations(
-        profile, calc_input, fuel_side=[fuel_leg], load_side=[load_leg]
+        profile, calc_input, fuel_side=[fuel_leg], load_side=[load_leg], verified=set()
     )
     assert combos, "expected a combination to be found once _try_calculate always accepts"
     combo = combos[0]
