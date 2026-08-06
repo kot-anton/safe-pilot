@@ -45,7 +45,14 @@ class FlightService:
         calc_input: CalculationInput,
         min_fuel_gal: dict[str, Decimal] | None = None,
     ) -> list[Recommendation]:
-        return generate_recommendations(profile, calc_input, min_fuel_gal=min_fuel_gal)
+        # allow_fuel_transfer stays off: whether a pilot can manually move fuel between tanks
+        # (and in which direction) is aircraft-specific and isn't captured anywhere in the
+        # profile, so suggesting it by default risks recommending a transfer the fuel system
+        # doesn't actually support. allow_add_fuel is safe to enable unconditionally -- it never
+        # proposes less fuel than the pilot planned, only more, verified by the same calculator.
+        return generate_recommendations(
+            profile, calc_input, min_fuel_gal=min_fuel_gal, allow_add_fuel=True
+        )
 
     def recommend_quick(
         self,

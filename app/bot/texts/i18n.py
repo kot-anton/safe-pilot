@@ -185,7 +185,7 @@ STRINGS: dict[str, str] = {
     'overall_adjust_and_recalculate': 'Adjust the loading and calculate again.',
     'status_incomplete': '⚠️ INCOMPLETE — LANDING CONDITION NOT EVALUATED',
     'recommendations_header': '💡 Suggested adjustments — pick one:',
-    'no_recommendations': 'No verified baggage or fuel adjustment brings every evaluated condition within limits. Change the planned cargo or fuel load and recalculate. Passenger reseating is not suggested.',
+    'no_recommendations': 'No verified seating, baggage, or fuel adjustment brings every evaluated condition within limits. Change the planned load and recalculate.',
     'history_empty': 'No calculations recorded yet.',
     'help_text': 'This bot calculates Weight & Balance (ramp, takeoff, landing) from aircraft data you enter yourself. It does not search any database, does not read documents, and does not use AI to calculate. All aircraft data must be entered and confirmed by you. Use /menu at any time to return to the main menu, add or select an aircraft, and run a calculation.',
     'already_first_step': 'You are already at the first step.',
