@@ -1,5 +1,7 @@
 # Download Aircraft Data — Design
 
+> **Update 2026-10-25:** the button was renamed **📄 View Profile** because it only shows the saved profile in chat. Behaviour below is unchanged.
+
 **Status:** implemented (merged via PR #21)
 **Scope:** `app/bot/handlers/menu.py`, `app/bot/handlers/aircraft_update.py`, `app/bot/keyboards/common.py`, `app/bot/texts/i18n.py`. Read-only feature — no domain or database changes.
 

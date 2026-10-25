@@ -95,7 +95,7 @@ def test_main_menu_reply_keyboard_is_persistent_and_localized():
 
 
 def test_download_data_menu_string_exists():
-    assert STRINGS["menu_download_data"] == "📥 Download Data"
+    assert STRINGS["menu_download_data"] == "📄 View Profile"
 
 
 def test_aircraft_submenu_offers_download_data_as_its_own_row():

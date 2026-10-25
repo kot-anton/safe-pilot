@@ -1460,3 +1460,90 @@ async def test_build_revision_summary_data_shapes_stations_and_envelope():
         "forward_cg_limit_in": "83.2",
         "aft_cg_limit_in": "85.1",
     }
+
+
+async def test_fuel_enroute_prompt_offers_explicit_no_burn_button():
+    """"No burn" stores a real 0 (landing stays evaluated), unlike the removed Skip button."""
+    user = SimpleNamespace(language="en")
+    state = _FakeState(
+        {
+            "fuel_station_ids": ["main"],
+            "fuel_station_names": {"main": "Main"},
+            "fuel": {"main": {"starting_gal": "20"}},
+        }
+    )
+    message = _FakeMessage()
+    await flight_calculation._render_fuel_prompt(message, state, user, 0, "enroute")
+
+    callbacks = [
+        button.callback_data
+        for row in message.answers[-1][1]["reply_markup"].inline_keyboard
+        for button in row
+    ]
+    assert "flight:no_burn" in callbacks
+    assert "wizard:skip" not in callbacks
+    assert "wizard:back" in callbacks
+    assert "wizard:cancel" in callbacks
+
+
+async def test_no_burn_button_records_zero_burn_with_landing_evaluated(monkeypatch):
+    user = SimpleNamespace(language="en")
+    state = _FakeState(
+        {
+            "fuel_station_ids": ["main"],
+            "fuel": {"main": {"starting_gal": "20", "taxi_burn_gal": "0"}},
+            "fuel_index": 0,
+        },
+        FlightWizard.fuel_enroute,
+    )
+    advanced = []
+
+    async def fake_next(message, state, user, index, *args):
+        advanced.append(index)
+
+    monkeypatch.setattr(flight_calculation, "_ask_next_fuel_starting", fake_next)
+    callback = _FakeCallback(_FakeMessage())
+
+    await flight_calculation.no_fuel_enroute(callback, state, user, None, None)
+
+    assert state.data["fuel"]["main"]["enroute_burn_gal"] == "0"
+    assert state.data["fuel"]["main"]["landing_fuel_provided"] is True
+    assert advanced == [1]
+
+
+async def test_update_mode_keep_current_nickname_advances_without_changing_it():
+    user = SimpleNamespace(language="en")
+    state = _FakeState(
+        {"update_mode": True, "tail_number": "N123AB", "nickname": "Old Bird"},
+        AircraftWizard.nickname,
+    )
+    callback = _FakeCallback(_FakeMessage())
+
+    await aircraft_wizard.keep_nickname(callback, state, user)
+
+    assert state.current_state == AircraftWizard.empty_weight
+    assert state.data["nickname"] == "Old Bird"
+
+
+async def test_station_hub_offers_cancel_and_back_only_with_history():
+    from app.bot.handlers import wizard_nav
+
+    user = SimpleNamespace(language="en")
+
+    async def hub_callbacks(extra: dict) -> list[str]:
+        state = _FakeState({"stations": [], **extra})
+        message = _FakeMessage()
+        await aircraft_wizard.render_station_add_prompt(message, state, user)
+        return [
+            button.callback_data
+            for row in message.answers[-1][1]["reply_markup"].inline_keyboard
+            for button in row
+        ]
+
+    first_screen = await hub_callbacks({})
+    assert "wizard:cancel" in first_screen
+    assert "wizard:back" not in first_screen
+
+    later_screen = await hub_callbacks({wizard_nav._HISTORY_KEY: [["step"]]})
+    assert "wizard:cancel" in later_screen
+    assert "wizard:back" in later_screen
