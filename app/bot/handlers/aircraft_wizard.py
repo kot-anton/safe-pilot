@@ -34,7 +34,7 @@ from app.bot.handlers._common import (
     parse_optional_text,
     short_tank_label,
 )
-from app.bot.handlers.wizard_nav import goto, go_back
+from app.bot.handlers.wizard_nav import goto, go_back, has_history
 from app.bot.keyboards.common import (
     STATION_TYPE_TEXT_KEYS,
     cancel_only_keyboard,
@@ -223,6 +223,11 @@ async def render_station_add_prompt(message: Message, state: FSMContext, user: U
         rows.append(
             [InlineKeyboardButton(text=t("btn_remove_station", lang), callback_data="wizard:remove_prompt")]
         )
+    footer = []
+    if await has_history(state):
+        footer.append(InlineKeyboardButton(text=t("btn_back", lang), callback_data="wizard:back"))
+    footer.append(InlineKeyboardButton(text=t("btn_cancel", lang), callback_data="wizard:cancel"))
+    rows.append(footer)
     text = t("ask_add_station", lang)
     if stations:
         text += f"\n\n{t('stations_added', lang)}\n" + "\n".join(
@@ -561,6 +566,12 @@ async def got_nickname(message: Message, state: FSMContext, user: User) -> None:
         return
     await state.update_data(nickname=nickname)
     await goto(message, state, user, AircraftWizard.empty_weight, render_empty_weight)
+
+
+@router.callback_query(AircraftWizard.nickname, F.data == "wizard:keep")
+async def keep_nickname(callback: CallbackQuery, state: FSMContext, user: User) -> None:
+    await goto(callback.message, state, user, AircraftWizard.empty_weight, render_empty_weight)
+    await callback.answer()
 
 
 @router.callback_query(AircraftWizard.nickname, F.data == "wizard:skip")

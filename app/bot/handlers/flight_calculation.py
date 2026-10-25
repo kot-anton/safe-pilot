@@ -430,10 +430,22 @@ async def _render_fuel_prompt(message: Message, state: FSMContext, user: User, i
             "capacity": fmt(capacity, " gal"),
         }
     else:
-        keyboard = skip_cancel_keyboard(lang, show_skip=False)
+        keyboard = _fuel_burn_keyboard(lang)
         starting = Decimal(data.get("fuel", {}).get(station_id, {}).get("starting_gal", "0"))
         kwargs = {"station": name, "available": fmt(starting, " gal")}
     await message.answer(t(text_key, lang, **kwargs), reply_markup=keyboard)
+
+
+def _fuel_burn_keyboard(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=t("btn_no_burn", lang), callback_data="flight:no_burn")],
+            [
+                InlineKeyboardButton(text=t("btn_back", lang), callback_data="wizard:back"),
+                InlineKeyboardButton(text=t("btn_cancel", lang), callback_data="wizard:cancel"),
+            ],
+        ]
+    )
 
 
 async def _cannot_go_back(callback: CallbackQuery, user: User) -> None:
@@ -667,6 +679,28 @@ async def _store_fuel_field_and_advance(
         await _ask_next_fuel_starting(
             message, state, user, index + 1, aircraft_service, flight_service
         )
+
+
+@router.callback_query(FlightWizard.fuel_enroute, F.data == "flight:no_burn")
+async def no_fuel_enroute(
+    callback: CallbackQuery,
+    state: FSMContext,
+    user: User,
+    aircraft_service: AircraftService,
+    flight_service: FlightService,
+) -> None:
+    await callback.answer()
+    await _store_fuel_field_and_advance(
+        callback.message,
+        state,
+        user,
+        "enroute",
+        "enroute_burn_gal",
+        "0",
+        aircraft_service,
+        flight_service,
+        landing_fuel_provided=True,
+    )
 
 
 @router.message(FlightWizard.fuel_enroute, F.text)
